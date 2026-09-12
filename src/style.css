@@ -148,6 +148,18 @@ h1 { font-size: clamp(36px, 4.5vw, 58px); margin: 9px 0 16px; }
 .advanced-details .diagnostics { margin: 0 14px 14px; padding: 0 14px 14px; border: 0; background: #09151d; }
 .advanced-details .diagnostics p { padding-top: 12px; }
 
+.run-large { min-height: 50px; padding-inline: 24px; font-size: 14px; }
+.requirement-note { display: flex; align-items: flex-start; gap: 11px; margin: -3px 0 16px; padding: 13px 15px; border: 1px solid rgba(234,182,73,.27); border-radius: 10px; background: rgba(234,182,73,.055); }
+.requirement-note > span { flex: 0 0 24px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: #0c1215; background: #eab649; font-weight: 800; }
+.requirement-note p { margin: 1px 0 0; color: #a99d7f; font-size: 11px; line-height: 1.55; }
+.requirement-note strong { color: #e2c987; }
+.input-pair-card { position: relative; padding: 18px; overflow: hidden; }
+.input-pair-card .pair-number { position: absolute; top: -15px; left: -11px; color: rgba(67,229,170,.075); font: 800 76px 'Manrope'; line-height: 1; pointer-events: none; }
+.input-pair-card .card-title, .input-pair-card > canvas, .input-pair-card > small { position: relative; }
+.input-pair-card > small { display: block; margin-top: 10px; }
+.match-result-card { position: relative; border-color: rgba(67,229,170,.42); }
+.match-result-card .download { margin-bottom: 12px; }
+
 @media (max-width: 980px) {
   .hero { grid-template-columns: 1fr; gap: 24px; }
   .workflow-steps { max-width: 670px; }
@@ -176,4 +188,5 @@ h1 { font-size: clamp(36px, 4.5vw, 58px); margin: 9px 0 16px; }
   .result-heading { align-items: flex-start; }
   .result-heading .button { padding-inline: 11px; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
+  .run-large { width: 100%; }
 }

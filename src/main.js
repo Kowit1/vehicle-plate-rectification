@@ -17,27 +17,27 @@ document.querySelector('#app').innerHTML = `
     <section class="hero">
       <div>
         <p class="eyebrow">VEHICLE PLATE RECTIFICATION</p>
-        <h1>ปรับป้ายทะเบียนเอียง<br><em>ให้ตรงในไม่กี่วินาที</em></h1>
-        <p class="hero-copy">เลือกรูปรถ ระบบจะค้นหาป้ายให้อัตโนมัติ จากนั้นตรวจกรอบและดาวน์โหลดภาพที่พร้อมนำไปอ่านตัวอักษร</p>
+        <h1>ปรับป้ายทะเบียนเอียง<br><em>ด้วย Feature Matching</em></h1>
+        <p class="hero-copy">จับคู่จุดเด่นระหว่างภาพป้ายที่เอียงกับภาพอ้างอิงหน้าตรง ใช้ RANSAC หา Homography แล้วแปลง Perspective ให้ป้ายกลับมาตรง</p>
       </div>
       <div class="workflow-steps" aria-label="ขั้นตอนใช้งาน">
-        <div><b>1</b><span><strong>เลือกรูป</strong><small>อัปโหลดหรือถ่ายใหม่</small></span></div>
+        <div><b>1</b><span><strong>ใส่ภาพคู่</strong><small>ภาพเอียง + ภาพอ้างอิง</small></span></div>
         <i></i>
-        <div><b>2</b><span><strong>เช็กกรอบ</strong><small>ลากมุมเพื่อปรับได้</small></span></div>
+        <div><b>2</b><span><strong>จับคู่จุดเด่น</strong><small>ORB + Ratio test</small></span></div>
         <i></i>
-        <div><b>3</b><span><strong>ดาวน์โหลด</strong><small>ภาพตรงและ OCR-ready</small></span></div>
+        <div><b>3</b><span><strong>ปรับให้ตรง</strong><small>RANSAC + Homography</small></span></div>
       </div>
     </section>
 
     <div id="runtime-status" class="runtime-status loading"><span class="pulse"></span><strong>กำลังเตรียมระบบตรวจจับ</strong><small>รอสักครู่ก่อนเลือกรูป…</small></div>
 
     <nav class="tabs" aria-label="Application modes">
-      <button class="tab active" data-tab="automatic">ใช้งาน</button>
-      <button class="tab" data-tab="matching">Feature Matching</button>
+      <button class="tab active" data-tab="matching">ปรับภาพเอียงตามโจทย์</button>
+      <button class="tab" data-tab="automatic">โหมดเลือก 4 มุม</button>
       <button class="tab" data-tab="method">หลักการทำงาน</button>
     </nav>
 
-    <section id="automatic" class="panel active">
+    <section id="automatic" class="panel">
       <div class="section-head">
         <div><p class="step">เริ่มต้นที่นี่</p><h2>เลือกรูปรถที่เห็นป้ายทะเบียน</h2><p>แนะนำรูปที่ป้ายไม่เล็กหรือเบลอจนเกินไป รองรับ JPG, PNG และภาพจากกล้องมือถือ</p></div>
         <div class="actions">
@@ -105,33 +105,36 @@ document.querySelector('#app').innerHTML = `
       </details>
     </section>
 
-    <section id="matching" class="panel">
+    <section id="matching" class="panel active">
       <div class="section-head">
-        <div><p class="step">MODE 02</p><h2>ORB feature matching lab</h2><p>Align an angled view to a frontal reference of the <strong>same physical plate</strong>.</p></div>
-        <button id="run-matching" class="button primary" disabled>Run ORB + RANSAC</button>
+        <div><p class="step">โหมดหลักตามโจทย์ CP461</p><h2>ปรับภาพป้ายเอียงให้เป็นหน้าตรง</h2><p>ใช้ภาพของ <strong>ป้ายทะเบียนเดียวกัน</strong> สองมุม เพื่อให้ ORB จับคู่จุดและ RANSAC คำนวณ Homography</p></div>
+        <button id="run-matching" class="button primary run-large" disabled>ปรับภาพให้ตรง</button>
       </div>
+      <div class="requirement-note"><span>!</span><p><strong>ทำไมต้องเป็นป้ายเดียวกัน?</strong> Feature Matching ต้องอาศัยตัวอักษรและรายละเอียดที่เหมือนกัน หากใช้คนละเลขทะเบียนจะจับคู่ไม่สำเร็จ</p></div>
       <div class="two-up">
-        <article class="card">
-          <div class="card-title"><span>Query</span><label class="mini-upload">Replace image<input id="query-upload" type="file" accept="image/*" hidden></label></div>
-          <canvas id="query-canvas"></canvas><small>Angled CCTV view</small>
+        <article class="card input-pair-card">
+          <div class="pair-number">1</div>
+          <div class="card-title"><span>ภาพป้ายที่เอียง (Query)</span><label class="mini-upload">เปลี่ยนรูป<input id="query-upload" type="file" accept="image/*" hidden></label></div>
+          <canvas id="query-canvas"></canvas><small>ภาพจากรถหรือกล้องที่มี Perspective distortion</small>
         </article>
-        <article class="card">
-          <div class="card-title"><span>Reference</span><label class="mini-upload">Replace image<input id="reference-upload" type="file" accept="image/*" hidden></label></div>
-          <canvas id="reference-canvas"></canvas><small>Front-facing view of the same plate</small>
+        <article class="card input-pair-card">
+          <div class="pair-number">2</div>
+          <div class="card-title"><span>ภาพหน้าตรง (Reference)</span><label class="mini-upload">เปลี่ยนรูป<input id="reference-upload" type="file" accept="image/*" hidden></label></div>
+          <canvas id="reference-canvas"></canvas><small>ภาพหน้าตรงของป้ายเดียวกัน ใช้เป็นระนาบปลายทาง</small>
         </article>
       </div>
       <div class="control-strip">
-        <label><span>Lowe ratio <output id="ratio-value">0.75</output></span><input id="ratio" type="range" min="0.55" max="0.90" value="0.75" step="0.01"></label>
-        <label><span>RANSAC threshold <output id="ransac-value">4.0 px</output></span><input id="ransac" type="range" min="1" max="10" value="4" step="0.5"></label>
+        <label><span>Lowe ratio threshold <output id="ratio-value">0.75</output></span><input id="ratio" type="range" min="0.55" max="0.90" value="0.75" step="0.01"></label>
+        <label><span>RANSAC reprojection threshold <output id="ransac-value">4.0 px</output></span><input id="ransac" type="range" min="1" max="10" value="4" step="0.5"></label>
         <div class="method-pill"><small>Detector / matcher</small><strong>ORB · Hamming KNN</strong></div>
       </div>
-      <div id="match-feedback" class="feedback neutral">Demo pair is ready.</div>
+      <div id="match-feedback" class="feedback neutral">ภาพตัวอย่างพร้อมแล้ว กด “ปรับภาพให้ตรง” เพื่อดูผลลัพธ์</div>
       <div class="metric-grid five" id="match-metrics">
         <div><small>Query keypoints</small><strong>—</strong></div><div><small>Reference keypoints</small><strong>—</strong></div><div><small>Good matches</small><strong>—</strong></div><div><small>RANSAC inliers</small><strong>—</strong></div><div><small>Inlier ratio</small><strong>—</strong></div>
       </div>
       <div class="two-up outputs">
-        <article class="card"><div class="card-title"><span>Geometric inliers</span><small>Outliers rejected by RANSAC</small></div><div class="canvas-well large"><canvas id="matches-output"></canvas><p class="placeholder">Run matching to visualize inliers</p></div></article>
-        <article class="card"><div class="card-title"><span>Homography output</span><small>Aligned to reference plane</small></div><div class="canvas-well large"><canvas id="match-output"></canvas><p class="placeholder">Aligned plate appears here</p></div><pre id="homography-matrix">Homography matrix: —</pre></article>
+        <article class="card"><div class="card-title"><span>คู่จุดที่ผ่าน RANSAC</span><small>เส้นแต่ละเส้นคือ Inlier match</small></div><div class="canvas-well large"><canvas id="matches-output"></canvas><p class="placeholder">กดปรับภาพเพื่อดูจุดที่จับคู่ได้</p></div></article>
+        <article class="card match-result-card"><span class="recommend-badge">ผลลัพธ์หลัก</span><div class="card-title"><span>ภาพที่ปรับให้ตรงแล้ว</span><small>Warped ด้วย Homography</small></div><div class="canvas-well large"><canvas id="match-output"></canvas><p class="placeholder">ภาพที่ปรับตรงจะแสดงที่นี่</p></div><a id="download-match" class="download disabled" download="homography-rectified-plate.png">ดาวน์โหลดภาพที่ปรับตรง <b>↓</b></a><pre id="homography-matrix">Homography matrix: —</pre></article>
       </div>
     </section>
 
@@ -441,12 +444,20 @@ for (const [inputSelector, canvasSelector] of [['#query-upload', '#query-canvas'
   $(inputSelector).addEventListener('change', async (event) => {
     if (!event.target.files[0]) return
     await loadFileToCanvas(event.target.files[0], $(canvasSelector), 1100)
-    setFeedback('#match-feedback', 'Image replaced. Run ORB + RANSAC to calculate a new alignment.', 'neutral')
+    clearCanvasOutput('#matches-output')
+    clearCanvasOutput('#match-output')
+    document.querySelectorAll('#matching .canvas-well .placeholder').forEach((placeholder) => { placeholder.hidden = false })
+    fillMetrics('#match-metrics', ['—', '—', '—', '—', '—'])
+    $('#homography-matrix').textContent = 'Homography matrix: —'
+    $('#download-match').removeAttribute('href')
+    $('#download-match').classList.add('disabled')
+    setFeedback('#match-feedback', 'เปลี่ยนรูปแล้ว กด “ปรับภาพให้ตรง” เพื่อคำนวณ ORB + RANSAC ใหม่', 'neutral')
+    event.target.value = ''
   })
 }
 
 $('#run-matching').addEventListener('click', () => {
-  setFeedback('#match-feedback', 'Extracting ORB descriptors and estimating robust geometry…', 'working')
+  setFeedback('#match-feedback', 'กำลังหา ORB keypoints จับคู่ descriptor และคัด outlier ด้วย RANSAC…', 'working')
   try {
     const result = matchAndRectify(
       state.cv,
@@ -458,13 +469,16 @@ $('#run-matching').addEventListener('click', () => {
       Number($('#ransac').value),
     )
     document.querySelectorAll('#matching .canvas-well .placeholder').forEach((p) => { p.hidden = true })
+    enableDownload('#download-match', $('#match-output'))
     fillMetrics('#match-metrics', [result.queryKeypoints, result.referenceKeypoints, result.goodMatches, result.inliers, `${(result.inlierRatio * 100).toFixed(1)}%`])
     const rows = [0, 1, 2].map((row) => result.homography.slice(row * 3, row * 3 + 3).map((v) => v.toFixed(5)).join('   '))
     $('#homography-matrix').textContent = `Homography matrix\n${rows.join('\n')}`
-    setFeedback('#match-feedback', 'Stable homography estimated. Only RANSAC inlier matches are shown.', 'success')
+    setFeedback('#match-feedback', `ปรับภาพเอียงสำเร็จ — พบ ${result.inliers} inliers จาก ${result.goodMatches} good matches`, 'success')
   } catch (error) {
     fillMetrics('#match-metrics', ['—', '—', '—', '—', '—'])
-    setFeedback('#match-feedback', `${error.message} Try a less extreme angle or a higher ratio threshold.`, 'error')
+    $('#download-match').removeAttribute('href')
+    $('#download-match').classList.add('disabled')
+    setFeedback('#match-feedback', `${error.message} กรุณาตรวจว่าเป็นป้ายเดียวกัน ภาพไม่เบลอเกินไป หรือเพิ่ม Lowe ratio เล็กน้อย`, 'error')
   }
 })
 

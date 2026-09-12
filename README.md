@@ -63,13 +63,13 @@ No environment variables or server functions are required.
 
 ## Application modes
 
-### Automatic rectification
+### Feature Matching Rectification (primary assignment flow)
+
+Upload an angled query image and a frontal reference image of the **same physical plate**. ORB extracts local descriptors, KNN generates candidate matches, the ratio test removes ambiguous pairs, and RANSAC estimates the homography used to warp the angled query onto the frontal reference plane. The app exposes keypoint, match and inlier counts, the inlier visualization, the 3 x 3 homography matrix and a downloadable rectified result.
+
+### Four-corner rectification (fallback)
 
 Upload one vehicle/CCTV image. The app proposes a plate quadrilateral and estimates a perspective transform from its four corners. If automatic detection fails, choose **Select 4 corners manually**, then click the visible corners in this order: top-left, top-right, bottom-right, bottom-left.
-
-### Feature Matching Lab
-
-Upload an angled query and a frontal reference image of the **same physical plate**. ORB finds local descriptors, KNN produces two candidate matches per descriptor, the ratio test rejects ambiguous matches, and RANSAC estimates the homography from geometrically consistent inliers.
 
 ## Honest limitations
 
