@@ -4,7 +4,9 @@ Tier 3 web application for **CP461: Introduction to Computer Vision**. It rectif
 
 ## Live pipeline
 
-- Automatic plate proposal using grayscale, histogram equalization, Canny edges, morphology and quadrilateral scoring
+- Multi-pass automatic plate proposal using two Canny thresholds, horizontal gradients, adaptive thresholding, morphology and geometry/texture scoring
+- Ranked plate candidates with previous/next controls when the first proposal is not correct
+- Drag-and-drop upload, automatic processing after upload and draggable corner fine-tuning
 - Manual four-corner fallback for difficult real-world images
 - ORB keypoint and binary descriptor extraction
 - KNN Hamming descriptor matching

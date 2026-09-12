@@ -16,15 +16,101 @@ function imageCoverage(points, width, height) {
   return Math.abs(area / 2) / (width * height)
 }
 
+function boundingBox(points) {
+  const xs = points.map((point) => point.x)
+  const ys = points.map((point) => point.y)
+  return {
+    x: Math.min(...xs),
+    y: Math.min(...ys),
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+  }
+}
+
+function quadArea(points) {
+  let area = 0
+  for (let i = 0; i < points.length; i += 1) {
+    const next = points[(i + 1) % points.length]
+    area += points[i].x * next.y - next.x * points[i].y
+  }
+  return Math.abs(area / 2)
+}
+
+export function scorePlateCandidate(points, width, height, edgeDensity = 0.12) {
+  const aspect = plateAspect(points)
+  const coverage = imageCoverage(points, width, height)
+  const box = boundingBox(points)
+  const rectangularity = quadArea(points) / Math.max(1, box.width * box.height)
+  const centerX = box.x + box.width / 2
+  const centerY = box.y + box.height / 2
+  const horizontalScore = Math.max(0, 1 - Math.abs(centerX / width - 0.5) * 1.3)
+  const verticalScore = Math.max(0, 1 - Math.abs(centerY / height - 0.66) * 1.1)
+  const aspectScore = Math.exp(-((Math.log(aspect) - Math.log(2.8)) ** 2) / 0.42)
+  const sizeScore = Math.min(coverage / 0.025, 1)
+  const textureScore = Math.max(0, 1 - Math.abs(edgeDensity - 0.15) / 0.2)
+  const score = (
+    aspectScore * 0.34
+    + sizeScore * 0.2
+    + rectangularity * 0.14
+    + textureScore * 0.18
+    + horizontalScore * 0.08
+    + verticalScore * 0.06
+  )
+  return { aspect, coverage, rectangularity, score }
+}
+
+function pointsFromApprox(approx) {
+  const raw = approx.data32S
+  return orderPoints([
+    { x: raw[0], y: raw[1] },
+    { x: raw[2], y: raw[3] },
+    { x: raw[4], y: raw[5] },
+    { x: raw[6], y: raw[7] },
+  ])
+}
+
+function isDuplicate(candidate, candidates) {
+  const a = boundingBox(candidate.points)
+  return candidates.some((item) => {
+    const b = boundingBox(item.points)
+    const left = Math.max(a.x, b.x)
+    const top = Math.max(a.y, b.y)
+    const right = Math.min(a.x + a.width, b.x + b.width)
+    const bottom = Math.min(a.y + a.height, b.y + b.height)
+    const intersection = Math.max(0, right - left) * Math.max(0, bottom - top)
+    const union = a.width * a.height + b.width * b.height - intersection
+    return union > 0 && intersection / union > 0.72
+  })
+}
+
+function edgeDensityInQuad(cv, edges, points) {
+  const box = boundingBox(points)
+  const x = Math.max(0, Math.floor(box.x))
+  const y = Math.max(0, Math.floor(box.y))
+  const width = Math.min(edges.cols - x, Math.max(1, Math.ceil(box.width)))
+  const height = Math.min(edges.rows - y, Math.max(1, Math.ceil(box.height)))
+  if (width <= 1 || height <= 1) return 0
+  const roi = edges.roi(new cv.Rect(x, y, width, height))
+  try {
+    return cv.countNonZero(roi) / (width * height)
+  } finally {
+    roi.delete()
+  }
+}
+
 export function detectPlate(cv, sourceCanvas, debugCanvas) {
   const src = cv.imread(sourceCanvas)
   const gray = new cv.Mat()
   const blurred = new cv.Mat()
   const edges = new cv.Mat()
-  const closed = new cv.Mat()
-  const contours = new cv.MatVector()
-  const hierarchy = new cv.Mat()
-  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 3))
+  const edgesSoft = new cv.Mat()
+  const gradient = new cv.Mat()
+  const gradient8 = new cv.Mat()
+  const gradientMask = new cv.Mat()
+  const adaptive = new cv.Mat()
+  const combined = new cv.Mat()
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 3))
+  const wideKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(19, 5))
   const candidates = []
 
   try {
@@ -32,46 +118,100 @@ export function detectPlate(cv, sourceCanvas, debugCanvas) {
     cv.equalizeHist(gray, gray)
     cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT)
     cv.Canny(blurred, edges, 55, 165)
-    cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2)
-    cv.findContours(closed, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+    cv.Canny(blurred, edgesSoft, 28, 105)
+    cv.Sobel(blurred, gradient, cv.CV_16S, 1, 0, 3)
+    cv.convertScaleAbs(gradient, gradient8)
+    cv.threshold(gradient8, gradientMask, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+    cv.adaptiveThreshold(blurred, adaptive, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 31, 7)
+    cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2)
+    cv.morphologyEx(edgesSoft, edgesSoft, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2)
+    cv.morphologyEx(gradientMask, gradientMask, cv.MORPH_CLOSE, wideKernel, new cv.Point(-1, -1), 2)
+    cv.morphologyEx(adaptive, adaptive, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 1)
+    cv.bitwise_or(edges, edgesSoft, combined)
+    cv.bitwise_or(combined, gradientMask, combined)
 
-    const imageArea = src.cols * src.rows
-    for (let i = 0; i < contours.size(); i += 1) {
-      const contour = contours.get(i)
-      const perimeter = cv.arcLength(contour, true)
-      const approx = new cv.Mat()
-      cv.approxPolyDP(contour, approx, 0.025 * perimeter, true)
+    const masks = [edges, edgesSoft, gradientMask, adaptive]
+    for (const mask of masks) {
+      const contours = new cv.MatVector()
+      const hierarchy = new cv.Mat()
+      try {
+        cv.findContours(mask, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+        for (let i = 0; i < contours.size(); i += 1) {
+          const contour = contours.get(i)
+          const perimeter = cv.arcLength(contour, true)
+          if (perimeter < Math.min(src.cols, src.rows) * 0.06) {
+            contour.delete()
+            continue
+          }
+          for (const epsilon of [0.018, 0.026, 0.038, 0.055, 0.075]) {
+            const approx = new cv.Mat()
+            cv.approxPolyDP(contour, approx, epsilon * perimeter, true)
+            if (approx.rows === 4 && cv.isContourConvex(approx)) {
+              const points = pointsFromApprox(approx)
+              const density = edgeDensityInQuad(cv, edgesSoft, points)
+              const metrics = scorePlateCandidate(points, src.cols, src.rows, density)
+              if (
+                metrics.coverage >= 0.00065
+                && metrics.coverage <= 0.38
+                && metrics.aspect >= 1.15
+                && metrics.aspect <= 7.8
+                && metrics.rectangularity >= 0.32
+              ) {
+                const candidate = { points, ...metrics }
+                if (!isDuplicate(candidate, candidates)) candidates.push(candidate)
+              }
+            }
+            approx.delete()
+          }
 
-      if (approx.rows === 4 && cv.isContourConvex(approx)) {
-        const area = Math.abs(cv.contourArea(approx, false))
-        const coverage = area / imageArea
-        const raw = approx.data32S
-        const points = orderPoints([
-          { x: raw[0], y: raw[1] },
-          { x: raw[2], y: raw[3] },
-          { x: raw[4], y: raw[5] },
-          { x: raw[6], y: raw[7] },
-        ])
-        const aspect = plateAspect(points)
-        if (coverage >= 0.0015 && coverage <= 0.42 && aspect >= 1.45 && aspect <= 6.8) {
-          const aspectScore = Math.exp(-((aspect - 2.8) ** 2) / 4.8)
-          const sizeScore = Math.min(coverage / 0.035, 1)
-          candidates.push({
-            points,
-            aspect,
-            coverage,
-            score: 0.68 * aspectScore + 0.32 * sizeScore,
-          })
+          // Textured plates do not always preserve a clean outer border. A bounding
+          // box around a horizontally-connected character region gives the user a
+          // useful editable proposal instead of failing with no result at all.
+          if (mask === gradientMask || mask === adaptive) {
+            const rect = cv.boundingRect(contour)
+            const points = orderPoints([
+              { x: rect.x, y: rect.y },
+              { x: rect.x + rect.width, y: rect.y },
+              { x: rect.x + rect.width, y: rect.y + rect.height },
+              { x: rect.x, y: rect.y + rect.height },
+            ])
+            const density = edgeDensityInQuad(cv, edgesSoft, points)
+            const metrics = scorePlateCandidate(points, src.cols, src.rows, density)
+            if (
+              metrics.coverage >= 0.00065
+              && metrics.coverage <= 0.2
+              && metrics.aspect >= 1.45
+              && metrics.aspect <= 7.8
+            ) {
+              const candidate = { points, ...metrics, score: metrics.score * 0.88 }
+              if (!isDuplicate(candidate, candidates)) candidates.push(candidate)
+            }
+          }
+          contour.delete()
         }
+      } finally {
+        safeDelete(contours, hierarchy)
       }
-      safeDelete(approx, contour)
     }
 
-    cv.imshow(debugCanvas, closed)
+    cv.imshow(debugCanvas, combined)
     candidates.sort((a, b) => b.score - a.score)
-    return { candidate: candidates[0] ?? null, candidates: candidates.slice(0, 8) }
+    return { candidate: candidates[0] ?? null, candidates: candidates.slice(0, 12) }
   } finally {
-    safeDelete(src, gray, blurred, edges, closed, contours, hierarchy, kernel)
+    safeDelete(
+      src,
+      gray,
+      blurred,
+      edges,
+      edgesSoft,
+      gradient,
+      gradient8,
+      gradientMask,
+      adaptive,
+      combined,
+      kernel,
+      wideKernel,
+    )
   }
 }
 

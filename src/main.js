@@ -18,7 +18,7 @@ document.querySelector('#app').innerHTML = `
       <div>
         <p class="eyebrow">Vehicle plate rectification for LPR</p>
         <h1>Straighten angled plates.<br><em>Expose the geometry.</em></h1>
-        <p class="hero-copy">A browser-based pipeline using ORB feature descriptors, descriptor matching, RANSAC and planar homography. Images never leave your device.</p>
+        <p class="hero-copy">Upload a vehicle photo, let the app find the plate, fine-tune its four corners, and export a straightened OCR-ready image. Processing stays on your device.</p>
       </div>
       <div class="hero-diagram" aria-label="Pipeline overview">
         <span>Input</span><i>→</i><span>Features</span><i>→</i><span>RANSAC</span><i>→</i><span>Rectified</span>
@@ -39,18 +39,23 @@ document.querySelector('#app').innerHTML = `
         <div class="actions">
           <label class="button secondary">Upload vehicle<input id="auto-upload" type="file" accept="image/*" hidden></label>
           <button id="auto-demo" class="button ghost">Reset demo</button>
-          <button id="auto-detect" class="button primary" disabled>Detect & rectify</button>
+          <button id="auto-detect" class="button primary" disabled>Detect plate</button>
         </div>
       </div>
 
       <div class="workspace-grid">
-        <article class="card image-card span-2">
-          <div class="card-title"><span>Input image</span><small id="corner-help">Automatic candidate</small></div>
+        <article class="card image-card span-2" id="image-drop-zone">
+          <div class="card-title"><span>Input image</span><small id="image-meta">Drop an image here or use Upload vehicle</small></div>
           <canvas id="auto-source" hidden></canvas>
           <canvas id="auto-preview" class="main-canvas" aria-label="Vehicle input image"></canvas>
           <div class="corner-toolbar">
             <button id="manual-corners" class="text-button">Select 4 corners manually</button>
             <button id="clear-corners" class="text-button" disabled>Clear points</button>
+            <span class="candidate-nav" id="candidate-nav" hidden>
+              <button id="previous-candidate" class="text-button" aria-label="Previous candidate">← Previous</button>
+              <strong id="candidate-position">1 / 1</strong>
+              <button id="next-candidate" class="text-button" aria-label="Next candidate">Next →</button>
+            </span>
             <button id="rectify-manual" class="text-button accent" disabled>Rectify selected area</button>
           </div>
         </article>
@@ -119,7 +124,7 @@ document.querySelector('#app').innerHTML = `
   <footer><span>Vehicle Plate Rectification for LPR</span><span>Client-side OpenCV.js · No image uploads</span></footer>
 `
 
-const state = { cv: null, points: [], manual: false }
+const state = { cv: null, points: [], manual: false, candidates: [], candidateIndex: 0, draggingPoint: -1 }
 const $ = (selector) => document.querySelector(selector)
 
 function setFeedback(selector, message, type = 'neutral') {
@@ -143,6 +148,9 @@ function renderCorners() {
   const source = $('#auto-source')
   const preview = $('#auto-preview')
   copyCanvas(source, preview)
+  $('#clear-corners').disabled = !state.points.length
+  $('#rectify-manual').disabled = state.points.length !== 4
+  preview.classList.toggle('editing', state.manual || state.points.length === 4)
   if (!state.points.length) return
   const ctx = preview.getContext('2d')
   const points = state.points.length === 4 ? orderPoints(state.points) : state.points
@@ -159,8 +167,12 @@ function renderCorners() {
     ctx.beginPath(); ctx.arc(point.x, point.y, Math.max(7, source.width / 110), 0, Math.PI * 2); ctx.fill()
     ctx.fillText(points.length === 4 ? ['TL', 'TR', 'BR', 'BL'][index] : String(index + 1), point.x + 12, point.y - 12)
   })
-  $('#clear-corners').disabled = false
-  $('#rectify-manual').disabled = points.length !== 4
+}
+
+function updateCandidateNavigation() {
+  const navigation = $('#candidate-nav')
+  navigation.hidden = state.candidates.length < 2
+  $('#candidate-position').textContent = `${state.candidateIndex + 1} / ${state.candidates.length}`
 }
 
 function enableDownload(selector, canvas) {
@@ -198,10 +210,30 @@ async function loadFileToCanvas(file, canvas, maxWidth = 1600) {
   bitmap.close()
 }
 
+async function useVehicleFile(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    setFeedback('#auto-feedback', 'Please choose a JPG, PNG or another image file.', 'error')
+    return
+  }
+  await loadFileToCanvas(file, $('#auto-source'))
+  $('#image-meta').textContent = `${file.name} · ${$('#auto-source').width} × ${$('#auto-source').height}px`
+  state.points = []; state.manual = false; state.candidates = []; renderCorners(); updateCandidateNavigation()
+  if (!state.cv) {
+    setFeedback('#auto-feedback', 'Image loaded. Detection will be available when OpenCV.js is ready.', 'working')
+    return
+  }
+  setFeedback('#auto-feedback', 'Image loaded. Detecting the plate…', 'working')
+  runAutomaticDetection()
+}
+
 function resetAutomaticDemo() {
   createDemoAssets(state.cv, $('#auto-source'), $('#query-canvas'), $('#reference-canvas'))
   state.points = []
   state.manual = false
+  state.candidates = []
+  state.candidateIndex = 0
+  updateCandidateNavigation()
+  $('#image-meta').textContent = 'Built-in sample · drag a green corner to fine-tune'
   renderCorners()
   clearCanvasOutput('#rectified-output'); clearCanvasOutput('#ocr-output')
   document.querySelectorAll('#automatic .canvas-well .placeholder').forEach((p) => { p.hidden = false })
@@ -223,29 +255,64 @@ $('#ransac').addEventListener('input', (event) => { $('#ransac-value').textConte
 $('#auto-demo').addEventListener('click', resetAutomaticDemo)
 $('#auto-upload').addEventListener('change', async (event) => {
   if (!event.target.files[0]) return
-  await loadFileToCanvas(event.target.files[0], $('#auto-source'))
-  state.points = []; state.manual = false; renderCorners()
-  setFeedback('#auto-feedback', 'Image loaded. Run automatic detection or select four corners manually.', 'neutral')
+  await useVehicleFile(event.target.files[0])
+  event.target.value = ''
 })
 
-$('#auto-detect').addEventListener('click', () => {
+
+const dropZone = $('#image-drop-zone')
+for (const eventName of ['dragenter', 'dragover']) {
+  dropZone.addEventListener(eventName, (event) => {
+    event.preventDefault()
+    dropZone.classList.add('dragging')
+  })
+}
+for (const eventName of ['dragleave', 'drop']) {
+  dropZone.addEventListener(eventName, (event) => {
+    event.preventDefault()
+    dropZone.classList.remove('dragging')
+  })
+}
+dropZone.addEventListener('drop', (event) => useVehicleFile(event.dataTransfer.files[0]))
+
+function selectCandidate(index) {
+  if (!state.candidates.length) return
+  state.candidateIndex = (index + state.candidates.length) % state.candidates.length
+  const candidate = state.candidates[state.candidateIndex]
+  state.points = candidate.points.map((point) => ({ ...point }))
+  state.manual = false
+  renderCorners()
+  updateCandidateNavigation()
+  applyRectification(state.points, { ...candidate, count: state.candidates.length })
+  setFeedback('#auto-feedback', `Candidate ${state.candidateIndex + 1} selected. Drag any green corner if it needs adjustment.`, 'success')
+}
+
+function runAutomaticDetection() {
+  if (!state.cv) {
+    setFeedback('#auto-feedback', 'The vision engine is still loading. Please try again in a moment.', 'working')
+    return
+  }
   setFeedback('#auto-feedback', 'Searching for plate-shaped quadrilaterals…', 'working')
   try {
     const result = detectPlate(state.cv, $('#auto-source'), $('#debug-output'))
     if (!result.candidate) throw new Error('No reliable plate-shaped region was found.')
-    state.points = result.candidate.points
-    state.manual = false
-    renderCorners()
-    applyRectification(state.points, { ...result.candidate, count: result.candidates.length })
+    state.candidates = result.candidates
+    selectCandidate(0)
   } catch (error) {
+    state.candidates = []
+    updateCandidateNavigation()
     setFeedback('#auto-feedback', `${error.message} Use manual four-corner selection as a fallback.`, 'error')
   }
-})
+}
+
+$('#auto-detect').addEventListener('click', runAutomaticDetection)
+$('#previous-candidate').addEventListener('click', () => selectCandidate(state.candidateIndex - 1))
+$('#next-candidate').addEventListener('click', () => selectCandidate(state.candidateIndex + 1))
 
 $('#manual-corners').addEventListener('click', () => {
-  state.points = []; state.manual = true; renderCorners()
-  $('#corner-help').textContent = 'Click TL → TR → BR → BL'
-  setFeedback('#auto-feedback', 'Manual mode: click the four visible plate corners in clockwise order.', 'working')
+  state.points = []; state.manual = true; state.candidates = []; renderCorners(); updateCandidateNavigation()
+  $('#corner-help').textContent = 'Click the 4 corners in any order'
+  setFeedback('#auto-feedback', 'Manual mode: click the four visible plate corners. You can drag a point to correct it.', 'working')
 })
 $('#clear-corners').addEventListener('click', () => { state.points = []; state.manual = true; renderCorners() })
 $('#auto-preview').addEventListener('click', (event) => {
@@ -257,6 +324,50 @@ $('#auto-preview').addEventListener('click', (event) => {
   })
   renderCorners()
 })
+
+function pointerPosition(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  return {
+    x: (event.clientX - rect.left) * event.currentTarget.width / rect.width,
+    y: (event.clientY - rect.top) * event.currentTarget.height / rect.height,
+  }
+}
+
+$('#auto-preview').addEventListener('pointerdown', (event) => {
+  if (state.points.length !== 4) return
+  const pointer = pointerPosition(event)
+  const threshold = Math.max(28, event.currentTarget.width / 25)
+  let closest = -1
+  let closestDistance = Infinity
+  state.points.forEach((point, index) => {
+    const distance = Math.hypot(point.x - pointer.x, point.y - pointer.y)
+    if (distance < closestDistance && distance < threshold) {
+      closest = index
+      closestDistance = distance
+    }
+  })
+  if (closest >= 0) {
+    state.draggingPoint = closest
+    state.manual = true
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+})
+
+$('#auto-preview').addEventListener('pointermove', (event) => {
+  if (state.draggingPoint < 0) return
+  state.points[state.draggingPoint] = pointerPosition(event)
+  renderCorners()
+})
+
+function stopDragging(event) {
+  if (state.draggingPoint < 0) return
+  state.draggingPoint = -1
+  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  setFeedback('#auto-feedback', 'Corners adjusted. Click “Rectify selected area” to apply the correction.', 'working')
+}
+
+$('#auto-preview').addEventListener('pointerup', stopDragging)
+$('#auto-preview').addEventListener('pointercancel', stopDragging)
 $('#rectify-manual').addEventListener('click', () => {
   try { applyRectification(state.points, 'Manual') } catch (error) { setFeedback('#auto-feedback', error.message, 'error') }
 })
