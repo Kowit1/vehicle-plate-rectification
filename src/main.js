@@ -6,76 +6,103 @@ import { detectPlate, matchAndRectify, preprocessForOcr, rectifyPlate } from './
 
 document.querySelector('#app').innerHTML = `
   <header class="site-header">
-    <a class="brand" href="#top" aria-label="PlateRect CV home">
+    <a class="brand" href="#top" aria-label="PlateRect home">
       <span class="brand-mark">PR</span>
-      <span><strong>PlateRect</strong><small>Computer Vision Lab</small></span>
+      <span><strong>PlateRect</strong><small>License plate tool</small></span>
     </a>
-    <div class="header-meta"><span>CP461</span><span class="dot"></span><span>Tier 3 Web App</span></div>
+    <div class="privacy-note"><span class="status-check">●</span> รูปไม่ถูกส่งออกจากเครื่อง</div>
   </header>
 
   <main id="top">
     <section class="hero">
       <div>
-        <p class="eyebrow">Vehicle plate rectification for LPR</p>
-        <h1>Straighten angled plates.<br><em>Expose the geometry.</em></h1>
-        <p class="hero-copy">Upload a vehicle photo, let the app find the plate, fine-tune its four corners, and export a straightened OCR-ready image. Processing stays on your device.</p>
+        <p class="eyebrow">VEHICLE PLATE RECTIFICATION</p>
+        <h1>ปรับป้ายทะเบียนเอียง<br><em>ให้ตรงในไม่กี่วินาที</em></h1>
+        <p class="hero-copy">เลือกรูปรถ ระบบจะค้นหาป้ายให้อัตโนมัติ จากนั้นตรวจกรอบและดาวน์โหลดภาพที่พร้อมนำไปอ่านตัวอักษร</p>
       </div>
-      <div class="hero-diagram" aria-label="Pipeline overview">
-        <span>Input</span><i>→</i><span>Features</span><i>→</i><span>RANSAC</span><i>→</i><span>Rectified</span>
+      <div class="workflow-steps" aria-label="ขั้นตอนใช้งาน">
+        <div><b>1</b><span><strong>เลือกรูป</strong><small>อัปโหลดหรือถ่ายใหม่</small></span></div>
+        <i></i>
+        <div><b>2</b><span><strong>เช็กกรอบ</strong><small>ลากมุมเพื่อปรับได้</small></span></div>
+        <i></i>
+        <div><b>3</b><span><strong>ดาวน์โหลด</strong><small>ภาพตรงและ OCR-ready</small></span></div>
       </div>
     </section>
 
-    <div id="runtime-status" class="runtime-status loading"><span class="pulse"></span><strong>Loading OpenCV.js</strong><small>Initializing the vision engine in your browser…</small></div>
+    <div id="runtime-status" class="runtime-status loading"><span class="pulse"></span><strong>กำลังเตรียมระบบตรวจจับ</strong><small>รอสักครู่ก่อนเลือกรูป…</small></div>
 
     <nav class="tabs" aria-label="Application modes">
-      <button class="tab active" data-tab="automatic">01 · Automatic</button>
-      <button class="tab" data-tab="matching">02 · Feature Matching</button>
-      <button class="tab" data-tab="method">03 · Method</button>
+      <button class="tab active" data-tab="automatic">ใช้งาน</button>
+      <button class="tab" data-tab="matching">Feature Matching</button>
+      <button class="tab" data-tab="method">หลักการทำงาน</button>
     </nav>
 
     <section id="automatic" class="panel active">
       <div class="section-head">
-        <div><p class="step">MODE 01</p><h2>Automatic plate rectification</h2><p>Find a plate-shaped quadrilateral, adjust the corners if needed, then warp it to a frontal view.</p></div>
+        <div><p class="step">เริ่มต้นที่นี่</p><h2>เลือกรูปรถที่เห็นป้ายทะเบียน</h2><p>แนะนำรูปที่ป้ายไม่เล็กหรือเบลอจนเกินไป รองรับ JPG, PNG และภาพจากกล้องมือถือ</p></div>
         <div class="actions">
-          <label class="button secondary">Upload vehicle<input id="auto-upload" type="file" accept="image/*" hidden></label>
-          <button id="auto-demo" class="button ghost">Reset demo</button>
-          <button id="auto-detect" class="button primary" disabled>Detect plate</button>
+          <button id="auto-demo" class="button ghost">ลองภาพตัวอย่าง</button>
         </div>
       </div>
 
-      <div class="workspace-grid">
-        <article class="card image-card span-2" id="image-drop-zone">
-          <div class="card-title"><span>Input image</span><small id="image-meta">Drop an image here or use Upload vehicle</small></div>
+      <div class="workspace-grid app-workspace">
+        <article class="card image-card span-2 empty" id="image-drop-zone">
+          <div id="drop-empty" class="drop-empty">
+            <span class="upload-icon" aria-hidden="true">↑</span>
+            <h3>ลากรูปมาวางตรงนี้</h3>
+            <p>หรือเลือกวิธีนำเข้ารูปด้านล่าง</p>
+            <div class="upload-actions">
+              <label class="button primary big">เลือกรูปจากเครื่อง<input id="auto-upload" type="file" accept="image/*" hidden></label>
+              <label class="button secondary big">ถ่ายรูป<input id="camera-upload" type="file" accept="image/*" capture="environment" hidden></label>
+            </div>
+            <small>รูปจะประมวลผลบนอุปกรณ์ของคุณเท่านั้น</small>
+          </div>
+          <div id="image-controls" hidden>
+            <div class="card-title"><span>1. ตรวจกรอบป้าย</span><small id="image-meta">รูปที่เลือก</small></div>
+          </div>
           <canvas id="auto-source" hidden></canvas>
           <canvas id="auto-preview" class="main-canvas" aria-label="Vehicle input image"></canvas>
-          <div class="corner-toolbar">
-            <button id="manual-corners" class="text-button">Select 4 corners manually</button>
-            <button id="clear-corners" class="text-button" disabled>Clear points</button>
+          <div id="corner-toolbar" class="corner-toolbar" hidden>
+            <div class="corner-tip"><b>กรอบไม่ตรง?</b><span>ลากจุดสีเขียว หรือเลือกกรอบใหม่เอง</span></div>
+            <button id="auto-detect" class="text-button" disabled>ค้นหาใหม่</button>
+            <button id="manual-corners" class="text-button">เลือก 4 มุมเอง</button>
+            <button id="clear-corners" class="text-button" disabled>ล้างจุด</button>
             <span class="candidate-nav" id="candidate-nav" hidden>
-              <button id="previous-candidate" class="text-button" aria-label="Previous candidate">← Previous</button>
+              <button id="previous-candidate" class="text-button" aria-label="กรอบก่อนหน้า">← ก่อนหน้า</button>
               <strong id="candidate-position">1 / 1</strong>
-              <button id="next-candidate" class="text-button" aria-label="Next candidate">Next →</button>
+              <button id="next-candidate" class="text-button" aria-label="กรอบถัดไป">ถัดไป →</button>
             </span>
-            <button id="rectify-manual" class="text-button accent" disabled>Rectify selected area</button>
+            <button id="rectify-manual" class="button primary apply" disabled>ใช้กรอบนี้</button>
           </div>
-        </article>
-        <article class="card">
-          <div class="card-title"><span>Rectified plate</span><small>Perspective transform</small></div>
-          <div class="canvas-well"><canvas id="rectified-output"></canvas><p class="placeholder">Run detection to see the result</p></div>
-          <a id="download-rectified" class="download disabled" download="rectified-plate.png">Download PNG ↓</a>
-        </article>
-        <article class="card">
-          <div class="card-title"><span>OCR-ready</span><small>Equalize · Denoise · Threshold</small></div>
-          <div class="canvas-well"><canvas id="ocr-output"></canvas><p class="placeholder">Preprocessed output appears here</p></div>
-          <a id="download-ocr" class="download disabled" download="ocr-ready-plate.png">Download PNG ↓</a>
         </article>
       </div>
 
-      <div id="auto-feedback" class="feedback neutral">Ready for an image.</div>
-      <div class="metric-grid" id="auto-metrics">
-        <div><small>Candidate score</small><strong>—</strong></div><div><small>Aspect ratio</small><strong>—</strong></div><div><small>Image coverage</small><strong>—</strong></div><div><small>Candidates</small><strong>—</strong></div>
-      </div>
-      <details class="diagnostics"><summary>Detection diagnostics</summary><div><p>The edge mask reveals the regions inspected by the contour-based plate proposal stage.</p><canvas id="debug-output"></canvas></div></details>
+      <div id="auto-feedback" class="feedback neutral">พร้อมใช้งาน — เลือกรูปเพื่อเริ่มต้น</div>
+
+      <section id="results-section" class="results-section" hidden>
+        <div class="result-heading"><div><span class="success-mark">✓</span><span><strong>2. ได้ผลลัพธ์แล้ว</strong><small>ตรวจดูภาพและเลือกไฟล์ที่ต้องการ</small></span></div><label class="button secondary">เปลี่ยนรูป<input class="vehicle-replace" type="file" accept="image/*" hidden></label></div>
+        <div class="workspace-grid">
+          <article class="card result-card">
+            <div class="card-title"><span>ป้ายที่ปรับตรงแล้ว</span><small>ภาพสี · Perspective transform</small></div>
+            <div class="canvas-well"><canvas id="rectified-output"></canvas><p class="placeholder">ผลลัพธ์จะแสดงที่นี่</p></div>
+            <a id="download-rectified" class="download disabled" download="rectified-plate.png">ดาวน์โหลดภาพสี <b>↓</b></a>
+          </article>
+          <article class="card result-card recommended">
+            <span class="recommend-badge">แนะนำสำหรับ OCR</span>
+            <div class="card-title"><span>ภาพพร้อมอ่านตัวอักษร</span><small>เพิ่ม contrast · ลด noise</small></div>
+            <div class="canvas-well"><canvas id="ocr-output"></canvas><p class="placeholder">ผลลัพธ์จะแสดงที่นี่</p></div>
+            <a id="download-ocr" class="download disabled" download="ocr-ready-plate.png">ดาวน์โหลด OCR-ready <b>↓</b></a>
+          </article>
+        </div>
+      </section>
+
+      <details class="advanced-details">
+        <summary>ดูรายละเอียดทางเทคนิค</summary>
+        <div class="metric-grid" id="auto-metrics">
+          <div><small>Candidate score</small><strong>—</strong></div><div><small>Aspect ratio</small><strong>—</strong></div><div><small>Image coverage</small><strong>—</strong></div><div><small>Candidates</small><strong>—</strong></div>
+        </div>
+        <div class="diagnostics"><p>ภาพขอบที่ระบบใช้ค้นหาบริเวณป้าย</p><canvas id="debug-output"></canvas></div>
+      </details>
     </section>
 
     <section id="matching" class="panel">
@@ -124,7 +151,7 @@ document.querySelector('#app').innerHTML = `
   <footer><span>Vehicle Plate Rectification for LPR</span><span>Client-side OpenCV.js · No image uploads</span></footer>
 `
 
-const state = { cv: null, points: [], manual: false, candidates: [], candidateIndex: 0, draggingPoint: -1 }
+const state = { cv: null, points: [], manual: false, candidates: [], candidateIndex: 0, draggingPoint: -1, hasImage: false }
 const $ = (selector) => document.querySelector(selector)
 
 function setFeedback(selector, message, type = 'neutral') {
@@ -186,10 +213,33 @@ function clearCanvasOutput(selector) {
   canvas.width = 0; canvas.height = 0
 }
 
+function setImageLoaded(loaded) {
+  state.hasImage = loaded
+  $('#drop-empty').hidden = loaded
+  $('#image-controls').hidden = !loaded
+  $('#corner-toolbar').hidden = !loaded
+  $('#image-drop-zone').classList.toggle('empty', !loaded)
+  $('#auto-detect').disabled = !loaded || !state.cv
+}
+
+function clearAutomaticResults() {
+  clearCanvasOutput('#rectified-output')
+  clearCanvasOutput('#ocr-output')
+  $('#results-section').hidden = true
+  for (const selector of ['#download-rectified', '#download-ocr']) {
+    const link = $(selector)
+    link.removeAttribute('href')
+    link.classList.add('disabled')
+  }
+  document.querySelectorAll('#automatic .canvas-well .placeholder').forEach((placeholder) => { placeholder.hidden = false })
+  fillMetrics('#auto-metrics', ['—', '—', '—', '—'])
+}
+
 function applyRectification(points, candidateCount = 'Manual') {
   const result = rectifyPlate(state.cv, $('#auto-source'), $('#rectified-output'), points)
   preprocessForOcr(state.cv, $('#rectified-output'), $('#ocr-output'))
   document.querySelectorAll('#automatic .canvas-well .placeholder').forEach((p) => { p.hidden = true })
+  $('#results-section').hidden = false
   enableDownload('#download-rectified', $('#rectified-output'))
   enableDownload('#download-ocr', $('#ocr-output'))
   fillMetrics('#auto-metrics', [
@@ -198,7 +248,7 @@ function applyRectification(points, candidateCount = 'Manual') {
     `${(result.coverage * 100).toFixed(2)}%`,
     candidateCount === 'Manual' ? 'Manual' : String(candidateCount.count),
   ])
-  setFeedback('#auto-feedback', 'Plate rectified successfully. The OCR-ready image can now be downloaded.', 'success')
+  setFeedback('#auto-feedback', 'เรียบร้อย! ถ้ากรอบสีเขียวตรงกับป้าย สามารถดาวน์โหลดผลลัพธ์ได้เลย', 'success')
 }
 
 async function loadFileToCanvas(file, canvas, maxWidth = 1600) {
@@ -212,17 +262,24 @@ async function loadFileToCanvas(file, canvas, maxWidth = 1600) {
 
 async function useVehicleFile(file) {
   if (!file || !file.type.startsWith('image/')) {
-    setFeedback('#auto-feedback', 'Please choose a JPG, PNG or another image file.', 'error')
+    setFeedback('#auto-feedback', 'ไฟล์นี้ไม่ใช่รูปภาพ กรุณาเลือกไฟล์ JPG หรือ PNG', 'error')
     return
   }
-  await loadFileToCanvas(file, $('#auto-source'))
+  try {
+    await loadFileToCanvas(file, $('#auto-source'))
+  } catch {
+    setFeedback('#auto-feedback', 'เปิดรูปนี้ไม่ได้ กรุณาลองบันทึกเป็น JPG หรือ PNG แล้วเลือกใหม่', 'error')
+    return
+  }
   $('#image-meta').textContent = `${file.name} · ${$('#auto-source').width} × ${$('#auto-source').height}px`
+  setImageLoaded(true)
+  clearAutomaticResults()
   state.points = []; state.manual = false; state.candidates = []; renderCorners(); updateCandidateNavigation()
   if (!state.cv) {
-    setFeedback('#auto-feedback', 'Image loaded. Detection will be available when OpenCV.js is ready.', 'working')
+    setFeedback('#auto-feedback', 'โหลดรูปแล้ว กำลังรอระบบตรวจจับ…', 'working')
     return
   }
-  setFeedback('#auto-feedback', 'Image loaded. Detecting the plate…', 'working')
+  setFeedback('#auto-feedback', 'กำลังค้นหาป้ายทะเบียนในรูป…', 'working')
   runAutomaticDetection()
 }
 
@@ -232,13 +289,13 @@ function resetAutomaticDemo() {
   state.manual = false
   state.candidates = []
   state.candidateIndex = 0
+  setImageLoaded(true)
+  clearAutomaticResults()
   updateCandidateNavigation()
-  $('#image-meta').textContent = 'Built-in sample · drag a green corner to fine-tune'
+  $('#image-meta').textContent = 'ภาพตัวอย่าง · ลากจุดสีเขียวเพื่อปรับกรอบได้'
   renderCorners()
-  clearCanvasOutput('#rectified-output'); clearCanvasOutput('#ocr-output')
-  document.querySelectorAll('#automatic .canvas-well .placeholder').forEach((p) => { p.hidden = false })
-  fillMetrics('#auto-metrics', ['—', '—', '—', '—'])
-  setFeedback('#auto-feedback', 'Built-in angled vehicle demo loaded.', 'neutral')
+  setFeedback('#auto-feedback', 'โหลดภาพตัวอย่างแล้ว กำลังค้นหาป้าย…', 'working')
+  runAutomaticDetection()
 }
 
 document.querySelectorAll('.tab').forEach((button) => {
@@ -258,6 +315,14 @@ $('#auto-upload').addEventListener('change', async (event) => {
   await useVehicleFile(event.target.files[0])
   event.target.value = ''
 })
+
+for (const selector of ['#camera-upload', '.vehicle-replace']) {
+  $(selector).addEventListener('change', async (event) => {
+    if (!event.target.files[0]) return
+    await useVehicleFile(event.target.files[0])
+    event.target.value = ''
+  })
+}
 
 
 const dropZone = $('#image-drop-zone')
@@ -284,24 +349,24 @@ function selectCandidate(index) {
   renderCorners()
   updateCandidateNavigation()
   applyRectification(state.points, { ...candidate, count: state.candidates.length })
-  setFeedback('#auto-feedback', `Candidate ${state.candidateIndex + 1} selected. Drag any green corner if it needs adjustment.`, 'success')
+  setFeedback('#auto-feedback', `พบกรอบที่เป็นไปได้ ${state.candidates.length} ตำแหน่ง — กำลังแสดงตำแหน่งที่ ${state.candidateIndex + 1} ลากจุดสีเขียวเพื่อปรับได้`, 'success')
 }
 
 function runAutomaticDetection() {
   if (!state.cv) {
-    setFeedback('#auto-feedback', 'The vision engine is still loading. Please try again in a moment.', 'working')
+    setFeedback('#auto-feedback', 'ระบบตรวจจับกำลังโหลด กรุณารอสักครู่', 'working')
     return
   }
-  setFeedback('#auto-feedback', 'Searching for plate-shaped quadrilaterals…', 'working')
+  setFeedback('#auto-feedback', 'กำลังค้นหาป้ายทะเบียน…', 'working')
   try {
     const result = detectPlate(state.cv, $('#auto-source'), $('#debug-output'))
-    if (!result.candidate) throw new Error('No reliable plate-shaped region was found.')
+    if (!result.candidate) throw new Error('ยังไม่พบป้ายอัตโนมัติ')
     state.candidates = result.candidates
     selectCandidate(0)
   } catch (error) {
     state.candidates = []
     updateCandidateNavigation()
-    setFeedback('#auto-feedback', `${error.message} Use manual four-corner selection as a fallback.`, 'error')
+    setFeedback('#auto-feedback', `${error.message} — กด “เลือก 4 มุมเอง” แล้วแตะมุมป้ายทั้งสี่จุดได้เลย`, 'error')
   }
 }
 
@@ -311,8 +376,8 @@ $('#next-candidate').addEventListener('click', () => selectCandidate(state.candi
 
 $('#manual-corners').addEventListener('click', () => {
   state.points = []; state.manual = true; state.candidates = []; renderCorners(); updateCandidateNavigation()
-  $('#corner-help').textContent = 'Click the 4 corners in any order'
-  setFeedback('#auto-feedback', 'Manual mode: click the four visible plate corners. You can drag a point to correct it.', 'working')
+  $('#image-meta').textContent = 'แตะมุมป้าย 4 จุด — เลือกลำดับไหนก็ได้'
+  setFeedback('#auto-feedback', 'โหมดเลือกเอง: แตะมุมป้ายให้ครบ 4 จุด แล้วกด “ใช้กรอบนี้”', 'working')
 })
 $('#clear-corners').addEventListener('click', () => { state.points = []; state.manual = true; renderCorners() })
 $('#auto-preview').addEventListener('click', (event) => {
@@ -363,7 +428,7 @@ function stopDragging(event) {
   if (state.draggingPoint < 0) return
   state.draggingPoint = -1
   if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-  setFeedback('#auto-feedback', 'Corners adjusted. Click “Rectify selected area” to apply the correction.', 'working')
+  setFeedback('#auto-feedback', 'ปรับกรอบแล้ว กด “ใช้กรอบนี้” เพื่อสร้างผลลัพธ์ใหม่', 'working')
 }
 
 $('#auto-preview').addEventListener('pointerup', stopDragging)
@@ -406,16 +471,23 @@ $('#run-matching').addEventListener('click', () => {
 async function initialize() {
   try {
     state.cv = await loadOpenCv()
-    resetAutomaticDemo()
-    $('#auto-detect').disabled = false
+    createDemoAssets(state.cv, $('#auto-source'), $('#query-canvas'), $('#reference-canvas'))
+    $('#auto-source').width = 0
+    $('#auto-source').height = 0
+    $('#auto-preview').width = 0
+    $('#auto-preview').height = 0
+    state.points = []
+    state.candidates = []
+    setImageLoaded(false)
+    clearAutomaticResults()
     $('#run-matching').disabled = false
     const status = $('#runtime-status')
     status.className = 'runtime-status ready'
-    status.innerHTML = '<span class="status-check">✓</span><strong>OpenCV.js ready</strong><small>All processing runs locally in this browser.</small>'
+    status.innerHTML = '<span class="status-check">✓</span><strong>พร้อมใช้งาน</strong><small>การประมวลผลทั้งหมดเกิดขึ้นในเบราว์เซอร์นี้</small>'
   } catch (error) {
     const status = $('#runtime-status')
     status.className = 'runtime-status failed'
-    status.innerHTML = `<strong>Vision engine failed to load</strong><small>${error.message}</small>`
+    status.innerHTML = `<strong>โหลดระบบตรวจจับไม่สำเร็จ</strong><small>กรุณารีเฟรชหน้าเว็บแล้วลองอีกครั้ง · ${error.message}</small>`
   }
 }
 
