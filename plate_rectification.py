@@ -81,20 +81,100 @@ def _iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) ->
     return intersection / union if union else 0.0
 
 
+def _expand_text_quad(points: np.ndarray, image_shape: tuple[int, int]) -> np.ndarray:
+    """Expand a glyph-group quad to include the plate margins and province line."""
+    quad = points.astype(np.float32).copy()
+    top_vector = quad[1] - quad[0]
+    bottom_vector = quad[2] - quad[3]
+    left_vector = quad[3] - quad[0]
+    right_vector = quad[2] - quad[1]
+
+    quad[0] -= 0.03 * left_vector + 0.02 * top_vector
+    quad[1] -= 0.03 * right_vector - 0.02 * top_vector
+    quad[3] += 0.12 * left_vector - 0.02 * bottom_vector
+    quad[2] += 0.12 * right_vector + 0.02 * bottom_vector
+
+    height, width = image_shape
+    quad[:, 0] = np.clip(quad[:, 0], 0, width - 1)
+    quad[:, 1] = np.clip(quad[:, 1], 0, height - 1)
+    return quad
+
+
+def _line_intersection(first: np.ndarray, second: np.ndarray, third: np.ndarray, fourth: np.ndarray) -> np.ndarray | None:
+    first_direction = second - first
+    second_direction = fourth - third
+    denominator = first_direction[0] * second_direction[1] - first_direction[1] * second_direction[0]
+    if abs(float(denominator)) < 1e-5:
+        return None
+    offset = third - first
+    scale = (offset[0] * second_direction[1] - offset[1] * second_direction[0]) / denominator
+    return first + scale * first_direction
+
+
+def _text_quad_from_contour(contour: np.ndarray) -> np.ndarray | None:
+    """Recover a plate quad while preserving a strongly sloped lower edge."""
+    hull = cv2.convexHull(contour)
+    perimeter = cv2.arcLength(hull, True)
+    quad_approx = None
+    for epsilon in (0.02, 0.03, 0.04, 0.05, 0.06, 0.075):
+        simplified = cv2.approxPolyDP(hull, epsilon * perimeter, True)
+        if len(simplified) == 4 and cv2.isContourConvex(simplified):
+            quad_approx = simplified
+            break
+    if quad_approx is None:
+        return None
+
+    quad = order_points(quad_approx.reshape(4, 2))
+    fine_hull = cv2.approxPolyDP(hull, 0.018 * perimeter, True).reshape(-1, 2).astype(np.float32)
+    bottom_left, bottom_right = quad[3], quad[2]
+    bottom_direction = bottom_right - bottom_left
+    bottom_length = float(np.linalg.norm(bottom_direction))
+    if bottom_length < 2:
+        return quad
+
+    signed_distances = np.array(
+        [
+            (bottom_direction[0] * (point[1] - bottom_left[1]) - bottom_direction[1] * (point[0] - bottom_left[0]))
+            / bottom_length
+            for point in fine_hull
+        ]
+    )
+    deepest_index = int(np.argmax(signed_distances))
+    deepest = fine_hull[deepest_index]
+    plate_height = max(np.linalg.norm(quad[3] - quad[0]), np.linalg.norm(quad[2] - quad[1]))
+
+    if signed_distances[deepest_index] > max(8.0, plate_height * 0.16):
+        projection = float(np.dot(deepest - bottom_left, bottom_direction) / (bottom_length**2))
+        if projection >= 0.5:
+            refined = _line_intersection(bottom_left, deepest, quad[1], bottom_right)
+            if refined is not None and np.linalg.norm(refined - bottom_right) < plate_height * 0.85:
+                quad[2] = refined
+        else:
+            refined = _line_intersection(deepest, bottom_right, quad[0], bottom_left)
+            if refined is not None and np.linalg.norm(refined - bottom_left) < plate_height * 0.85:
+                quad[3] = refined
+    return quad
+
+
 def _candidate_from_contour(
     contour: np.ndarray,
     edge_map: np.ndarray,
     gray: np.ndarray,
+    text_group: bool = False,
 ) -> PlateCandidate | None:
     height, width = gray.shape
     image_area = float(height * width)
     contour_area = float(cv2.contourArea(contour))
-    if contour_area < image_area * 0.0012 or contour_area > image_area * 0.24:
+    maximum_area = 0.55 if text_group else 0.24
+    if contour_area < image_area * 0.0012 or contour_area > image_area * maximum_area:
         return None
 
     perimeter = cv2.arcLength(contour, True)
     approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
-    if len(approx) == 4 and cv2.isContourConvex(approx):
+    text_quad = _text_quad_from_contour(contour) if text_group else None
+    if text_quad is not None:
+        points = text_quad
+    elif len(approx) == 4 and cv2.isContourConvex(approx):
         points = approx.reshape(4, 2).astype(np.float32)
     else:
         rect = cv2.minAreaRect(contour)
@@ -108,6 +188,9 @@ def _candidate_from_contour(
     except ValueError:
         return None
 
+    if text_group:
+        points = _expand_text_quad(points, gray.shape)
+
     top = np.linalg.norm(points[1] - points[0])
     bottom = np.linalg.norm(points[2] - points[3])
     left = np.linalg.norm(points[3] - points[0])
@@ -117,7 +200,8 @@ def _candidate_from_contour(
     if plate_height < 1:
         return None
     aspect = plate_width / plate_height
-    if not 1.45 <= aspect <= 7.5:
+    minimum_aspect = 0.70 if text_group else 1.45
+    if not minimum_aspect <= aspect <= 7.5:
         return None
 
     polygon_area = abs(cv2.contourArea(points))
@@ -131,7 +215,9 @@ def _candidate_from_contour(
         return None
     # A plate in a vehicle/CCTV frame should not span nearly the whole image.
     # This rejects bumpers, grilles and windshields that otherwise look rectangular.
-    if w / width > 0.72 or h / height > 0.34:
+    maximum_width = 0.95 if text_group else 0.72
+    maximum_height = 1.00 if text_group else 0.34
+    if w / width > maximum_width or h / height > maximum_height:
         return None
 
     mask = np.zeros_like(gray)
@@ -160,6 +246,10 @@ def _candidate_from_contour(
         + 0.19 * position_score
         + 0.05 * size_score
     )
+    if text_group:
+        # A connected cluster of dark glyph-like strokes is stronger evidence
+        # than a plain rectangular vehicle part, especially in close-up views.
+        score += 0.15
     return PlateCandidate(points, float(score), (x, y, w, h), rectangularity, edge_density)
 
 
@@ -184,11 +274,40 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
     _, sobel_mask = cv2.threshold(sobel, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     sobel_mask = cv2.morphologyEx(sobel_mask, cv2.MORPH_CLOSE, horizontal_kernel, iterations=2)
 
+    # Group dark characters on a lighter plate. This is deliberately separate
+    # from the outer-edge detector so it also works on colored plates and on
+    # close-up plates with strong perspective distortion.
+    blackhat = cv2.morphologyEx(
+        blurred,
+        cv2.MORPH_BLACKHAT,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (25, 9)),
+    )
+    text_gradient = cv2.Sobel(blackhat, cv2.CV_32F, 1, 0, ksize=-1)
+    text_gradient = np.absolute(text_gradient)
+    gradient_min, gradient_max = float(text_gradient.min()), float(text_gradient.max())
+    text_gradient = ((text_gradient - gradient_min) / (gradient_max - gradient_min + 1e-6) * 255).astype(np.uint8)
+    text_gradient = cv2.GaussianBlur(text_gradient, (5, 5), 0)
+    text_gradient = cv2.morphologyEx(
+        text_gradient,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (25, 7)),
+        iterations=2,
+    )
+    _, text_mask = cv2.threshold(text_gradient, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    text_mask = cv2.morphologyEx(
+        text_mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5)),
+        iterations=1,
+    )
+
     candidates: list[PlateCandidate] = []
-    for candidate_mask in (closed_edges, sobel_mask):
-        contours, _ = cv2.findContours(candidate_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    masks = ((closed_edges, False), (sobel_mask, False), (text_mask, True))
+    for candidate_mask, text_group in masks:
+        retrieval = cv2.RETR_EXTERNAL if text_group else cv2.RETR_LIST
+        contours, _ = cv2.findContours(candidate_mask, retrieval, cv2.CHAIN_APPROX_SIMPLE)
         for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:120]:
-            candidate = _candidate_from_contour(contour, edges, gray)
+            candidate = _candidate_from_contour(contour, edges, gray, text_group=text_group)
             if candidate is not None:
                 candidates.append(candidate)
 
@@ -199,7 +318,7 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
             unique.append(candidate)
         if len(unique) >= limit:
             break
-    return unique, {"edges": edges, "candidate_mask": closed_edges}
+    return unique, {"edges": edges, "candidate_mask": closed_edges, "text_mask": text_mask}
 
 
 def draw_detection(image: np.ndarray, points: np.ndarray, label: str = "PLATE") -> np.ndarray:

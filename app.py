@@ -150,8 +150,9 @@ with details:
     with st.expander("ข้อมูลทางเทคนิค"):
         st.markdown("**Homography matrix**")
         st.code(np.array2string(result.homography, precision=5, suppress_small=True))
-        mask_one, mask_two = st.columns(2)
+        mask_one, mask_two, mask_three = st.columns(3)
         mask_one.image(diagnostics["edges"], caption="Canny edges", width="stretch", clamp=True)
         mask_two.image(diagnostics["candidate_mask"], caption="Connected edge mask", width="stretch", clamp=True)
+        mask_three.image(diagnostics["text_mask"], caption="Character-group mask", width="stretch", clamp=True)
 
 st.caption("OCR เป็นขั้นตอนเสริม ภาพสุดท้ายถูกเตรียมไว้เพื่อนำไปใช้กับ OCR ภายนอกได้ทันที")

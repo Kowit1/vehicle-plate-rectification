@@ -84,6 +84,23 @@ class PlatePipelineTests(unittest.TestCase):
         self.assertGreater(float(detected_centre[1]), 570)
         self.assertLess(float(np.linalg.norm(detected_centre - plate.mean(axis=0))), 75)
 
+    def test_close_up_oblique_plate_is_detected(self):
+        image = np.full((420, 640, 3), (150, 155, 160), dtype=np.uint8)
+        plate = np.full((180, 430, 3), 235, dtype=np.uint8)
+        cv2.rectangle(plate, (4, 4), (425, 175), (35, 40, 42), 7)
+        cv2.putText(plate, "49-92", (52, 122), cv2.FONT_HERSHEY_SIMPLEX, 2.3, (15, 20, 22), 7, cv2.LINE_AA)
+        source = np.array([[0, 0], [429, 0], [429, 179], [0, 179]], np.float32)
+        expected = np.array([[170, 8], [540, 80], [420, 412], [75, 220]], np.float32)
+        transform = cv2.getPerspectiveTransform(source, expected)
+        warped = cv2.warpPerspective(plate, transform, (640, 420))
+        mask = cv2.warpPerspective(np.full((180, 430), 255, np.uint8), transform, (640, 420))
+        image[mask > 0] = warped[mask > 0]
+
+        candidates, _ = detect_plate_candidates(image)
+        self.assertTrue(candidates)
+        detected_centre = candidates[0].points.mean(axis=0)
+        self.assertLess(float(np.linalg.norm(detected_centre - expected.mean(axis=0))), 90)
+
 
 if __name__ == "__main__":
     unittest.main()
