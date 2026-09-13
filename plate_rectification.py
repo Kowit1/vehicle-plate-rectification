@@ -181,6 +181,44 @@ def _text_quad_from_contour(contour: np.ndarray) -> np.ndarray | None:
     return quad
 
 
+def _character_layout_score(gray: np.ndarray, points: np.ndarray) -> float:
+    """Estimate whether a quad contains several aligned, character-sized strokes."""
+    destination = np.array([[0, 0], [359, 0], [359, 119], [0, 119]], dtype=np.float32)
+    normalized = cv2.warpPerspective(
+        gray,
+        cv2.getPerspectiveTransform(order_points(points), destination),
+        (360, 120),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    normalized = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8)).apply(normalized)
+    blackhat = cv2.morphologyEx(
+        normalized,
+        cv2.MORPH_BLACKHAT,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (13, 7)),
+    )
+    _, strokes = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    strokes = cv2.morphologyEx(
+        strokes,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2)),
+    )
+    _, _, stats, _ = cv2.connectedComponentsWithStats(strokes)
+    character_count = 0
+    for x, _, width, height, area in stats[1:]:
+        aspect = width / max(1, height)
+        if (
+            30 <= height <= 106
+            and 7 <= width <= 86
+            and area >= 60
+            and 0.12 <= aspect <= 1.30
+            and x >= 4
+            and x + width <= 356
+        ):
+            character_count += 1
+    return min(1.0, character_count / 6.0)
+
+
 def _candidate_from_contour(
     contour: np.ndarray,
     edge_map: np.ndarray,
@@ -271,6 +309,7 @@ def _candidate_from_contour(
     position_score = float(np.sqrt(horizontal_score * vertical_score))
     width_fraction = w / width
     size_score = float(np.exp(-abs(np.log(max(width_fraction, 0.01) / 0.30))))
+    character_score = _character_layout_score(gray, points)
     score = (
         0.26 * aspect_score
         + 0.15 * rectangularity
@@ -279,6 +318,7 @@ def _candidate_from_contour(
         + 0.15 * coverage_score
         + 0.19 * position_score
         + 0.05 * size_score
+        + 0.12 * character_score
     )
     if text_group:
         # A connected cluster of dark glyph-like strokes is stronger evidence
@@ -290,7 +330,7 @@ def _candidate_from_contour(
     # white plates are neither rewarded nor penalized.
     score += 0.13 * float(np.clip((chroma_fraction - 0.30) / 0.60, 0.0, 1.0))
     score -= 0.16 * float(np.clip((dark_fraction - 0.55) / 0.35, 0.0, 1.0))
-    return PlateCandidate(points, float(score), (x, y, w, h), rectangularity, edge_density)
+    return PlateCandidate(points, float(np.clip(score, 0.0, 1.0)), (x, y, w, h), rectangularity, edge_density)
 
 
 def _refine_strongly_skewed_colored_candidate(
@@ -333,7 +373,7 @@ def _refine_strongly_skewed_colored_candidate(
     refined = max(alternatives, key=lambda item: item[0])[1]
     return PlateCandidate(
         points=refined.points,
-        score=max(candidate.score, refined.score) + 0.02,
+        score=min(1.0, max(candidate.score, refined.score) + 0.02),
         bbox=refined.bbox,
         rectangularity=refined.rectangularity,
         edge_density=refined.edge_density,

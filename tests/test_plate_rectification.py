@@ -54,6 +54,7 @@ class PlatePipelineTests(unittest.TestCase):
         detected = candidates[0]
         self.assertLess(float(np.linalg.norm(expected.mean(axis=0) - detected.points.mean(axis=0))), 80)
         self.assertGreater(detected.score, 0.45)
+        self.assertLessEqual(detected.score, 1.0)
         self.assertEqual(diagnostics["edges"].shape, image.shape[:2])
 
         crop = crop_plate(image, detected.points)
