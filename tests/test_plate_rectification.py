@@ -64,6 +64,26 @@ class PlatePipelineTests(unittest.TestCase):
         self.assertGreater(result.inliers, 8)
         self.assertGreater(result.image.shape[1] / result.image.shape[0], 2.0)
 
+    def test_large_grille_does_not_outrank_lower_plate(self):
+        image = np.full((900, 900, 3), 185, dtype=np.uint8)
+        # A wide high-contrast grille is a common false positive.
+        grille = np.array([[55, 270], [845, 270], [805, 485], [95, 485]], np.int32)
+        cv2.fillConvexPoly(image, grille, (28, 31, 34))
+        cv2.polylines(image, [grille], True, (210, 214, 218), 12)
+        for x in range(115, 810, 45):
+            cv2.line(image, (x, 290), (x - 20, 465), (105, 110, 115), 4)
+
+        plate = np.array([[295, 625], [620, 612], [632, 748], [286, 757]], np.int32)
+        cv2.fillConvexPoly(image, plate, (238, 238, 232))
+        cv2.polylines(image, [plate], True, (30, 70, 55), 8)
+        cv2.putText(image, "ABC 123", (320, 710), cv2.FONT_HERSHEY_SIMPLEX, 1.25, (25, 80, 55), 4, cv2.LINE_AA)
+
+        candidates, _ = detect_plate_candidates(image)
+        self.assertTrue(candidates)
+        detected_centre = candidates[0].points.mean(axis=0)
+        self.assertGreater(float(detected_centre[1]), 570)
+        self.assertLess(float(np.linalg.norm(detected_centre - plate.mean(axis=0))), 75)
+
 
 if __name__ == "__main__":
     unittest.main()

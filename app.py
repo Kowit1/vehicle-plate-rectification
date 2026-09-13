@@ -43,7 +43,7 @@ st.markdown(
 
 
 def show_bgr(image: np.ndarray, caption: str | None = None) -> None:
-    st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption=caption, use_container_width=True)
+    st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption=caption, width="stretch")
 
 
 source_mode = st.radio("แหล่งภาพ", ["อัปโหลดไฟล์", "ถ่ายจากกล้อง"], horizontal=True, label_visibility="collapsed")
@@ -74,7 +74,7 @@ if not candidates:
     st.markdown("ลองใช้ภาพที่ป้ายใหญ่และชัดขึ้น ลดแสงสะท้อน หรือครอปรถให้ใกล้ขึ้นแล้วอัปโหลดใหม่")
     show_bgr(vehicle_image, "ภาพที่ได้รับ")
     with st.expander("ดูภาพขอบที่ระบบตรวจพบ"):
-        st.image(diagnostics["edges"], use_container_width=True, clamp=True)
+        st.image(diagnostics["edges"], width="stretch", clamp=True)
     st.stop()
 
 selector_col, metric_col, size_col = st.columns([2.2, 1, 1])
@@ -128,7 +128,7 @@ with overview:
         show_bgr(result.image, "Perspective Transform")
     with ready_col:
         st.markdown("**3. ภาพพร้อม OCR**")
-        st.image(ocr_ready, caption="Grayscale + Contrast + Denoise", use_container_width=True, clamp=True)
+        st.image(ocr_ready, caption="Grayscale + Contrast + Denoise", width="stretch", clamp=True)
 
     if result.method == "RANSAC edge homography":
         st.success(f"ปรับป้ายด้วย Homography + RANSAC สำเร็จ — จุดที่ผ่าน {result.inliers}/{result.correspondences}")
@@ -137,9 +137,9 @@ with overview:
 
     download_one, download_two = st.columns(2)
     with download_one:
-        st.download_button("ดาวน์โหลดป้ายที่ปรับตรง", encode_png(result.image), "plate-rectified.png", "image/png", use_container_width=True)
+        st.download_button("ดาวน์โหลดป้ายที่ปรับตรง", encode_png(result.image), "plate-rectified.png", "image/png", width="stretch")
     with download_two:
-        st.download_button("ดาวน์โหลดภาพพร้อม OCR", encode_png(ocr_ready), "plate-ocr-ready.png", "image/png", use_container_width=True, type="primary")
+        st.download_button("ดาวน์โหลดภาพพร้อม OCR", encode_png(ocr_ready), "plate-ocr-ready.png", "image/png", width="stretch", type="primary")
 
 with details:
     show_bgr(draw_detection(vehicle_image, plate_points), "กรอบที่นำไปประมวลผล")
@@ -151,7 +151,7 @@ with details:
         st.markdown("**Homography matrix**")
         st.code(np.array2string(result.homography, precision=5, suppress_small=True))
         mask_one, mask_two = st.columns(2)
-        mask_one.image(diagnostics["edges"], caption="Canny edges", use_container_width=True, clamp=True)
-        mask_two.image(diagnostics["candidate_mask"], caption="Connected edge mask", use_container_width=True, clamp=True)
+        mask_one.image(diagnostics["edges"], caption="Canny edges", width="stretch", clamp=True)
+        mask_two.image(diagnostics["candidate_mask"], caption="Connected edge mask", width="stretch", clamp=True)
 
 st.caption("OCR เป็นขั้นตอนเสริม ภาพสุดท้ายถูกเตรียมไว้เพื่อนำไปใช้กับ OCR ภายนอกได้ทันที")

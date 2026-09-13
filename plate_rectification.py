@@ -129,6 +129,10 @@ def _candidate_from_contour(
     w, h = min(width - x, w), min(height - y, h)
     if w < 30 or h < 10:
         return None
+    # A plate in a vehicle/CCTV frame should not span nearly the whole image.
+    # This rejects bumpers, grilles and windshields that otherwise look rectangular.
+    if w / width > 0.72 or h / height > 0.34:
+        return None
 
     mask = np.zeros_like(gray)
     cv2.fillConvexPoly(mask, points.astype(np.int32), 255)
@@ -140,15 +144,21 @@ def _candidate_from_contour(
     aspect_score = float(np.exp(-abs(np.log(aspect / expected_aspect))))
     coverage = polygon_area / image_area
     coverage_score = min(1.0, coverage / 0.025)
+    centre_x = float(points[:, 0].mean()) / width
     centre_y = float(points[:, 1].mean()) / height
-    position_score = 1.0 - min(1.0, abs(centre_y - 0.62) / 0.62)
+    horizontal_score = float(np.exp(-abs(centre_x - 0.50) / 0.30))
+    vertical_score = float(np.exp(-abs(centre_y - 0.72) / 0.28))
+    position_score = float(np.sqrt(horizontal_score * vertical_score))
+    width_fraction = w / width
+    size_score = float(np.exp(-abs(np.log(max(width_fraction, 0.01) / 0.30))))
     score = (
-        0.29 * aspect_score
-        + 0.20 * rectangularity
-        + 0.12 * min(1.0, edge_density / 0.20)
-        + 0.12 * contrast
-        + 0.22 * coverage_score
-        + 0.05 * position_score
+        0.26 * aspect_score
+        + 0.15 * rectangularity
+        + 0.10 * min(1.0, edge_density / 0.20)
+        + 0.10 * contrast
+        + 0.15 * coverage_score
+        + 0.19 * position_score
+        + 0.05 * size_score
     )
     return PlateCandidate(points, float(score), (x, y, w, h), rectangularity, edge_density)
 
