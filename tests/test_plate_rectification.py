@@ -115,6 +115,26 @@ class PlatePipelineTests(unittest.TestCase):
         self.assertGreater(float(detected_centre[1]), 570)
         self.assertLess(float(np.linalg.norm(detected_centre - plate.mean(axis=0))), 75)
 
+    def test_small_colored_plate_outranks_dark_grille(self):
+        image = np.full((600, 900, 3), (70, 82, 95), dtype=np.uint8)
+        grille = np.array([[210, 250], [720, 225], [750, 455], [185, 480]], np.int32)
+        cv2.fillConvexPoly(image, grille, (24, 27, 31))
+        cv2.polylines(image, [grille], True, (120, 35, 28), 12)
+        for x in range(220, 720, 38):
+            cv2.line(image, (x, 255), (x - 20, 455), (78, 84, 90), 5)
+
+        plate = np.array([[405, 315], [548, 307], [552, 382], [402, 389]], np.int32)
+        cv2.fillConvexPoly(image, plate, (32, 58, 222))
+        cv2.polylines(image, [plate], True, (225, 225, 218), 6)
+        cv2.putText(image, "1-7659", (414, 358), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (16, 18, 20), 3, cv2.LINE_AA)
+        cv2.putText(image, "BANGKOK", (425, 378), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (18, 20, 22), 1, cv2.LINE_AA)
+
+        candidates, _ = detect_plate_candidates(image)
+        self.assertTrue(candidates)
+        detected = candidates[0]
+        self.assertLess(float(np.linalg.norm(detected.points.mean(axis=0) - plate.mean(axis=0))), 45)
+        self.assertLess(detected.bbox[2], 230)
+
     def test_close_up_oblique_plate_is_detected(self):
         image = np.full((420, 640, 3), (150, 155, 160), dtype=np.uint8)
         plate = np.full((180, 430, 3), 235, dtype=np.uint8)

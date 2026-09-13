@@ -186,6 +186,7 @@ def _candidate_from_contour(
     edge_map: np.ndarray,
     gray: np.ndarray,
     text_group: bool = False,
+    hsv: np.ndarray | None = None,
 ) -> PlateCandidate | None:
     height, width = gray.shape
     image_area = float(height * width)
@@ -251,6 +252,14 @@ def _candidate_from_contour(
     edge_density = cv2.countNonZero(cv2.bitwise_and(edge_map, edge_map, mask=mask)) / pixels
     inside_values = gray[mask > 0]
     contrast = min(1.0, float(inside_values.std()) / 70.0) if inside_values.size else 0.0
+    chroma_fraction = 0.0
+    dark_fraction = 0.0
+    if hsv is not None:
+        saturation = hsv[:, :, 1][mask > 0]
+        value = hsv[:, :, 2][mask > 0]
+        if saturation.size:
+            chroma_fraction = float(np.mean((saturation > 70) & (value > 55)))
+            dark_fraction = float(np.mean(value < 80))
     expected_aspect = 3.0
     aspect_score = float(np.exp(-abs(np.log(aspect / expected_aspect))))
     coverage = polygon_area / image_area
@@ -275,12 +284,66 @@ def _candidate_from_contour(
         # A connected cluster of dark glyph-like strokes is stronger evidence
         # than a plain rectangular vehicle part, especially in close-up views.
         score += 0.15
+    # Thai plates are commonly white, yellow, red, or orange. A strong chromatic
+    # surface is useful positive evidence, while a mostly dark region is more
+    # likely to be a grille. These terms are deliberately bounded so neutral
+    # white plates are neither rewarded nor penalized.
+    score += 0.13 * float(np.clip((chroma_fraction - 0.30) / 0.60, 0.0, 1.0))
+    score -= 0.16 * float(np.clip((dark_fraction - 0.55) / 0.35, 0.0, 1.0))
     return PlateCandidate(points, float(score), (x, y, w, h), rectangularity, edge_density)
+
+
+def _refine_strongly_skewed_colored_candidate(
+    candidate: PlateCandidate,
+    adaptive_candidates: list[PlateCandidate],
+    hsv: np.ndarray,
+) -> PlateCandidate:
+    """Replace an unstable colored-text quad with a better overlapping frame quad."""
+    mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.round(candidate.points).astype(np.int32), 255)
+    saturation = hsv[:, :, 1][mask > 0]
+    value = hsv[:, :, 2][mask > 0]
+    if not saturation.size:
+        return candidate
+    chroma_fraction = float(np.mean((saturation > 70) & (value > 55)))
+
+    if chroma_fraction < 0.62:
+        return candidate
+
+    candidate_area = candidate.bbox[2] * candidate.bbox[3]
+    candidate_centre = candidate.points.mean(axis=0)
+    alternatives: list[tuple[float, PlateCandidate]] = []
+    for alternative in adaptive_candidates:
+        overlap = _iou(candidate.bbox, alternative.bbox)
+        area_ratio = (alternative.bbox[2] * alternative.bbox[3]) / max(1, candidate_area)
+        centre_distance = float(np.linalg.norm(alternative.points.mean(axis=0) - candidate_centre))
+        distance_limit = max(candidate.bbox[2], candidate.bbox[3]) * 0.25
+        rectangularity_gain = alternative.rectangularity - candidate.rectangularity
+        if (
+            overlap >= 0.35
+            and 0.65 <= area_ratio <= 1.60
+            and centre_distance <= distance_limit
+            and rectangularity_gain >= 0.08
+        ):
+            quality = 0.55 * alternative.rectangularity + 0.30 * overlap - 0.15 * abs(1.0 - area_ratio)
+            alternatives.append((quality, alternative))
+
+    if not alternatives:
+        return candidate
+    refined = max(alternatives, key=lambda item: item[0])[1]
+    return PlateCandidate(
+        points=refined.points,
+        score=max(candidate.score, refined.score) + 0.02,
+        bbox=refined.bbox,
+        rectangularity=refined.rectangularity,
+        edge_density=refined.edge_density,
+    )
 
 
 def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[PlateCandidate], dict[str, np.ndarray]]:
     """Find plausible plate quadrilaterals using complementary edge masks."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8)).apply(gray)
     blurred = cv2.bilateralFilter(clahe, 9, 60, 60)
     edges = cv2.Canny(blurred, 55, 170)
@@ -332,9 +395,38 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
         retrieval = cv2.RETR_EXTERNAL if text_group else cv2.RETR_LIST
         contours, _ = cv2.findContours(candidate_mask, retrieval, cv2.CHAIN_APPROX_SIMPLE)
         for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:120]:
-            candidate = _candidate_from_contour(contour, edges, gray, text_group=text_group)
+            candidate = _candidate_from_contour(contour, edges, gray, text_group=text_group, hsv=hsv)
             if candidate is not None:
                 candidates.append(candidate)
+
+    adaptive_mask = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        7,
+    )
+    adaptive_mask = cv2.morphologyEx(
+        adaptive_mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+        iterations=1,
+    )
+    adaptive_contours, _ = cv2.findContours(adaptive_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    adaptive_candidates: list[PlateCandidate] = []
+    for contour in sorted(adaptive_contours, key=cv2.contourArea, reverse=True)[:180]:
+        text_candidate = _candidate_from_contour(contour, edges, gray, text_group=True, hsv=hsv)
+        frame_candidate = _candidate_from_contour(contour, edges, gray, text_group=False, hsv=hsv)
+        if text_candidate is not None:
+            adaptive_candidates.append(text_candidate)
+        if frame_candidate is not None:
+            adaptive_candidates.append(frame_candidate)
+
+    candidates = [
+        _refine_strongly_skewed_colored_candidate(candidate, adaptive_candidates, hsv)
+        for candidate in candidates
+    ]
 
     candidates.sort(key=lambda item: item.score, reverse=True)
     unique: list[PlateCandidate] = []
@@ -343,7 +435,12 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
             unique.append(candidate)
         if len(unique) >= limit:
             break
-    return unique, {"edges": edges, "candidate_mask": closed_edges, "text_mask": text_mask}
+    return unique, {
+        "edges": edges,
+        "candidate_mask": closed_edges,
+        "text_mask": text_mask,
+        "adaptive_mask": adaptive_mask,
+    }
 
 
 def draw_detection(image: np.ndarray, points: np.ndarray, label: str = "PLATE") -> np.ndarray:
