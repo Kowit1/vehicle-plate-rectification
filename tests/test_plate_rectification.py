@@ -3,7 +3,15 @@ import unittest
 import cv2
 import numpy as np
 
-from plate_rectification import crop_plate, decode_image, detect_plate_candidates, order_points, preprocess_for_ocr, rectify_plate
+from plate_rectification import (
+    _text_quad_from_contour,
+    crop_plate,
+    decode_image,
+    detect_plate_candidates,
+    order_points,
+    preprocess_for_ocr,
+    rectify_plate,
+)
 
 
 def synthetic_vehicle() -> tuple[np.ndarray, np.ndarray]:
@@ -100,6 +108,17 @@ class PlatePipelineTests(unittest.TestCase):
         self.assertTrue(candidates)
         detected_centre = candidates[0].points.mean(axis=0)
         self.assertLess(float(np.linalg.norm(detected_centre - expected.mean(axis=0))), 90)
+
+    def test_decorative_lower_tab_does_not_tilt_straight_plate(self):
+        contour = np.array(
+            [[[324, 148]], [[321, 236]], [[164, 255]], [[87, 238]], [[79, 152]]],
+            dtype=np.int32,
+        )
+        quad = _text_quad_from_contour(contour)
+        self.assertIsNotNone(quad)
+        ordered = order_points(quad)
+        self.assertLess(abs(float(ordered[2, 1] - ordered[3, 1])), 8.0)
+        self.assertLess(float(ordered[3, 1]), 245.0)
 
 
 if __name__ == "__main__":

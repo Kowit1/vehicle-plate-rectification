@@ -143,7 +143,11 @@ def _text_quad_from_contour(contour: np.ndarray) -> np.ndarray | None:
     deepest = fine_hull[deepest_index]
     plate_height = max(np.linalg.norm(quad[3] - quad[0]), np.linalg.norm(quad[2] - quad[1]))
 
-    if signed_distances[deepest_index] > max(8.0, plate_height * 0.16):
+    # A small protrusion is often a dealer frame, logo, or decorative strip.
+    # Only alter the geometric corner when the lower-edge deviation is large
+    # enough to indicate genuine perspective, otherwise rectification can make
+    # an already straight plate look more skewed.
+    if signed_distances[deepest_index] > max(10.0, plate_height * 0.26):
         projection = float(np.dot(deepest - bottom_left, bottom_direction) / (bottom_length**2))
         if projection >= 0.5:
             refined = _line_intersection(bottom_left, deepest, quad[1], bottom_right)
