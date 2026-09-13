@@ -453,15 +453,30 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
         cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
         iterations=1,
     )
-    adaptive_contours, _ = cv2.findContours(adaptive_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    enhanced_adaptive_mask = cv2.adaptiveThreshold(
+        blurred,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        7,
+    )
+    enhanced_adaptive_mask = cv2.morphologyEx(
+        enhanced_adaptive_mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)),
+        iterations=1,
+    )
     adaptive_candidates: list[PlateCandidate] = []
-    for contour in sorted(adaptive_contours, key=cv2.contourArea, reverse=True)[:180]:
-        text_candidate = _candidate_from_contour(contour, edges, gray, text_group=True, hsv=hsv)
-        frame_candidate = _candidate_from_contour(contour, edges, gray, text_group=False, hsv=hsv)
-        if text_candidate is not None:
-            adaptive_candidates.append(text_candidate)
-        if frame_candidate is not None:
-            adaptive_candidates.append(frame_candidate)
+    for refinement_mask in (adaptive_mask, enhanced_adaptive_mask):
+        adaptive_contours, _ = cv2.findContours(refinement_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in sorted(adaptive_contours, key=cv2.contourArea, reverse=True)[:180]:
+            text_candidate = _candidate_from_contour(contour, edges, gray, text_group=True, hsv=hsv)
+            frame_candidate = _candidate_from_contour(contour, edges, gray, text_group=False, hsv=hsv)
+            if text_candidate is not None:
+                adaptive_candidates.append(text_candidate)
+            if frame_candidate is not None:
+                adaptive_candidates.append(frame_candidate)
 
     candidates = [
         _refine_strongly_skewed_colored_candidate(candidate, adaptive_candidates, hsv)
@@ -480,6 +495,7 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
         "candidate_mask": closed_edges,
         "text_mask": text_mask,
         "adaptive_mask": adaptive_mask,
+        "enhanced_adaptive_mask": enhanced_adaptive_mask,
     }
 
 
