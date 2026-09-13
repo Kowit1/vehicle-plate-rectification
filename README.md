@@ -2,6 +2,8 @@
 
 เว็บ Streamlit สำหรับเปลี่ยนภาพรถหรือภาพนิ่งจาก CCTV ให้เป็นภาพป้ายทะเบียนที่มองตรงและพร้อมนำไปใช้กับ OCR
 
+**ทดลองใช้งาน:** [Streamlit Community Cloud](https://vehicle-plate-rectification-rupcdtmqkf9ncjqiqgptdw.streamlit.app/)
+
 ## ขั้นตอนการทำงาน
 
 1. อัปโหลดภาพรถ 1 ภาพ หรือถ่ายภาพจากกล้อง
@@ -24,8 +26,8 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
 จากนั้นเปิด `http://localhost:8501`
@@ -33,13 +35,15 @@ streamlit run app.py
 ## ทดสอบ
 
 ```bash
-pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
 ชุดทดสอบครอบคลุม SIFT, ORB, KNN ratio test, RANSAC, fallback และภาพรถ/ป้ายเอียงสังเคราะห์โดยไม่ต้องพึ่งไฟล์ภายนอก
 
 ## Deploy บน Streamlit Community Cloud
+
+แอปเวอร์ชันปัจจุบัน deploy จาก branch `main` และเปิดใช้งานได้จากลิงก์ด้านบน การ push commit ใหม่ขึ้น branch นี้จะทำให้ Streamlit deploy เวอร์ชันล่าสุดให้อัตโนมัติ
 
 1. Push repository นี้ขึ้น GitHub
 2. เข้า Streamlit Community Cloud และเลือก **Create app**
