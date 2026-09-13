@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import cv2
+import hashlib
 import numpy as np
 import streamlit as st
 
@@ -109,16 +110,21 @@ with selector_col:
     selected_index = st.selectbox(
         "กรอบป้ายที่ตรวจพบ",
         range(len(candidates)),
-        format_func=lambda index: f"ตัวเลือก {index + 1} — ความมั่นใจ {candidates[index].score * 100:.0f}%",
+        format_func=lambda index: f"ตัวเลือก {index + 1} — คะแนนจัดอันดับ {candidates[index].score * 100:.0f}/100",
     )
 candidate = candidates[selected_index]
 with metric_col:
-    st.metric("ความมั่นใจ", f"{candidate.score * 100:.0f}%")
+    st.metric("คะแนนจัดอันดับ", f"{candidate.score * 100:.0f}/100",
+              help="คะแนนเปรียบเทียบตัวเลือกในภาพเดียวกัน ไม่ใช่เปอร์เซ็นต์ความแม่นยำ")
 with size_col:
     st.metric("ขนาดภาพ", f"{vehicle_image.shape[1]}×{vehicle_image.shape[0]}")
 
+if candidate.character_evidence < 0.25:
+    st.warning("หลักฐานตัวอักษรในกรอบนี้ยังน้อย กรุณาตรวจกรอบบนภาพรถ หรือเลือกตัวเลือกอื่นก่อนนำผลไปใช้")
+
 use_manual = False
 manual_points = candidate.points.copy()
+image_key = hashlib.sha256(uploaded.getvalue()).hexdigest()[:16]
 with st.expander("กรอบไม่ตรง? ปรับพิกัดมุมด้วยตนเอง"):
     st.caption("พิกัดเรียงเป็น บนซ้าย → บนขวา → ล่างขวา → ล่างซ้าย")
     point_columns = st.columns(4)
@@ -127,12 +133,12 @@ with st.expander("กรอบไม่ตรง? ปรับพิกัดม
         with column:
             st.markdown(f"**{point_names[index]}**")
             manual_points[index, 0] = st.number_input(
-                "X", 0, vehicle_image.shape[1] - 1, int(candidate.points[index, 0]), key=f"x-{selected_index}-{index}"
+                "X", 0, vehicle_image.shape[1] - 1, int(candidate.points[index, 0]), key=f"x-{image_key}-{selected_index}-{index}"
             )
             manual_points[index, 1] = st.number_input(
-                "Y", 0, vehicle_image.shape[0] - 1, int(candidate.points[index, 1]), key=f"y-{selected_index}-{index}"
+                "Y", 0, vehicle_image.shape[0] - 1, int(candidate.points[index, 1]), key=f"y-{image_key}-{selected_index}-{index}"
             )
-    use_manual = st.checkbox("ใช้พิกัดที่แก้ไข", key=f"manual-{selected_index}")
+    use_manual = st.checkbox("ใช้พิกัดที่แก้ไข", key=f"manual-{image_key}-{selected_index}")
 
 try:
     plate_points = order_points(manual_points if use_manual else candidate.points)
@@ -157,10 +163,10 @@ with overview:
         st.markdown("**1. ป้ายที่ตรวจพบ**")
         show_bgr(before_crop, "ก่อนปรับมุม")
     with straight_col:
-        st.markdown("**2. ป้ายที่ปรับตรงแล้ว**")
+        st.markdown("**2. ผลปรับมุมป้าย**")
         show_bgr(result.image, "Perspective Transform")
     with ready_col:
-        st.markdown("**3. ภาพพร้อม OCR**")
+        st.markdown("**3. ภาพเตรียมสำหรับ OCR**")
         st.image(ocr_ready, caption="Grayscale + Contrast + Denoise", width="stretch", clamp=True)
 
     if "+ KNN ratio + RANSAC" in result.method:
@@ -176,8 +182,11 @@ with overview:
     else:
         st.warning(
             f"Feature matching ยังไม่เสถียร ({result.feature_failure_reason}) "
-            "และจุดขอบไม่พอ จึงใช้ Perspective Transform จากมุมป้าย 4 จุดแทน"
+            f"— {result.geometry_warning}"
         )
+
+    for warning in result.quality_warnings:
+        st.warning(warning)
 
     download_one, download_two = st.columns(2)
     with download_one:
@@ -210,4 +219,4 @@ with details:
         mask_two.image(diagnostics["candidate_mask"], caption="Connected edge mask", width="stretch", clamp=True)
         mask_three.image(diagnostics["text_mask"], caption="Character-group mask", width="stretch", clamp=True)
 
-st.caption("OCR เป็นขั้นตอนเสริม ภาพสุดท้ายถูกเตรียมไว้เพื่อนำไปใช้กับ OCR ภายนอกได้ทันที")
+st.caption("ตรวจว่าครอบครบทั้งป้ายและตัวอักษรไม่บิดก่อนนำไปใช้กับ OCR ความชัดยังขึ้นกับภาพต้นฉบับ")

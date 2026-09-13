@@ -19,6 +19,8 @@ class PlateCandidate:
     bbox: tuple[int, int, int, int]
     rectangularity: float
     edge_density: float
+    character_evidence: float = 0.0
+    boundary_supported: bool = False
 
 
 @dataclass
@@ -37,6 +39,8 @@ class RectificationResult:
     ratio_threshold: float
     match_visualization: np.ndarray | None
     feature_failure_reason: str | None
+    geometry_warning: str | None = None
+    quality_warnings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -87,7 +91,7 @@ def order_points(points: Iterable[Iterable[float]]) -> np.ndarray:
         cyclic = cyclic[[0, 3, 2, 1]]
 
     area = abs(cv2.contourArea(cyclic))
-    if area < 25:
+    if area < 25 or not cv2.isContourConvex(cyclic):
         raise ValueError("พื้นที่ป้ายเล็กเกินไปหรือมุมทับกัน")
     return cyclic.astype(np.float32)
 
@@ -219,6 +223,43 @@ def _character_layout_score(gray: np.ndarray, points: np.ndarray) -> float:
     return min(1.0, character_count / 6.0)
 
 
+def _plate_character_evidence(gray: np.ndarray, points: np.ndarray) -> float:
+    """Look for a row of similarly sized, aligned glyphs inside plate margins.
+
+    Unlike edge density this penalizes windows/grilles and tight crops of only
+    character strokes. It is ranking evidence, not a calibrated probability.
+    """
+    dst = np.float32([[0, 0], [319, 0], [319, 119], [0, 119]])
+    patch = cv2.warpPerspective(gray, cv2.getPerspectiveTransform(order_points(points), dst), (320, 120))
+    patch = cv2.GaussianBlur(patch, (3, 3), 0)
+    patch = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 2)).apply(patch)
+    _, binary = cv2.threshold(patch, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    adaptive = cv2.adaptiveThreshold(patch, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 9)
+    best = 0.0
+    for mask in (binary, adaptive):
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        glyphs = []
+        for x, y, w, h, area in stats[1:]:
+            if (4 <= x and x + w <= 316 and 3 <= y and y + h <= 117
+                    and 25 <= h <= 91 and 4 <= w <= 76 and 0.08 <= w / h <= 1.45
+                    and area >= 40 and 0.12 <= area / (w * h) <= 0.90):
+                glyphs.append((x, y, w, h))
+        for anchor in glyphs:
+            # A line can be slightly tilted or contain Thai glyphs of unequal height.
+            row = [g for g in glyphs if abs((g[1] + g[3]) - (anchor[1] + anchor[3])) <= 15
+                   and 0.55 <= g[3] / anchor[3] <= 1.8]
+            if len(row) < 3:
+                continue
+            span = (max(g[0] + g[2] for g in row) - min(g[0] for g in row)) / 320
+            median_height = float(np.median([g[3] for g in row])) / 120
+            alignment = float(np.exp(-np.std([g[1] + g[3] for g in row]) / 12))
+            count_score = min(1.0, len(row) / 6)
+            height_score = float(np.exp(-abs(median_height - 0.48) / 0.30))
+            score = count_score * min(1.0, span / 0.60) * (0.60 + 0.20 * alignment + 0.20 * height_score)
+            best = max(best, score)
+    return best
+
+
 def _candidate_from_contour(
     contour: np.ndarray,
     edge_map: np.ndarray,
@@ -235,7 +276,10 @@ def _candidate_from_contour(
 
     perimeter = cv2.arcLength(contour, True)
     approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
-    text_quad = _text_quad_from_contour(contour) if text_group else None
+    try:
+        text_quad = _text_quad_from_contour(contour) if text_group else None
+    except ValueError:
+        return None
     if text_quad is not None:
         points = text_quad
     elif len(approx) == 4 and cv2.isContourConvex(approx):
@@ -253,7 +297,10 @@ def _candidate_from_contour(
         return None
 
     if text_group:
-        points = _expand_text_quad(points, gray.shape)
+        try:
+            points = order_points(_expand_text_quad(points, gray.shape))
+        except ValueError:
+            return None
 
     top = np.linalg.norm(points[1] - points[0])
     bottom = np.linalg.norm(points[2] - points[3])
@@ -483,6 +530,42 @@ def detect_plate_candidates(image: np.ndarray, limit: int = 8) -> tuple[list[Pla
         for candidate in candidates
     ]
 
+    # Use actual closed plate surfaces as additional hypotheses. Large closing
+    # kernels used to group text can join a plate to its grille, or turn a row
+    # of glyphs into an incorrect trapezoid; these masks preserve frame edges.
+    frame_masks = [cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)[1]
+                   for threshold in (90, 140, 185)]
+    hue, saturation, value = cv2.split(hsv)
+    colored = (((hue < 38) | (hue > 170)) & (saturation > 80) & (value > 75)).astype(np.uint8) * 255
+    frame_masks.append(colored)
+    for frame_mask in frame_masks:
+        frame_mask = cv2.morphologyEx(frame_mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        contours, _ = cv2.findContours(frame_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:150]:
+            if cv2.contourArea(contour) < gray.size * 0.0005:
+                continue
+            quad = cv2.approxPolyDP(contour, 0.025 * cv2.arcLength(contour, True), True)
+            if len(quad) != 4 or not cv2.isContourConvex(quad):
+                continue
+            frame = _candidate_from_contour(contour, edges, gray, hsv=hsv)
+            if frame is not None and frame.rectangularity >= 0.70:
+                sides = [np.linalg.norm(frame.points[(i + 1) % 4] - frame.points[i]) for i in range(4)]
+                # Very unequal opposite edges frequently arise from joined
+                # lettering or trim, not a closed plate surface.
+                frame.boundary_supported = bool(min(sides[0], sides[2]) / max(sides[0], sides[2]) >= 0.50
+                                                and min(sides[1], sides[3]) / max(sides[1], sides[3]) >= 0.50)
+                candidates.append(frame)
+
+    for candidate in candidates:
+        evidence = _plate_character_evidence(gray, candidate.points)
+        candidate.character_evidence = evidence
+        quad = candidate.points
+        lengths = [np.linalg.norm(quad[(i + 1) % 4] - quad[i]) for i in range(4)]
+        aspect = max(lengths[0], lengths[2]) / max(1.0, max(lengths[1], lengths[3]))
+        aspect_evidence = float(np.exp(-0.7 * max(0.0, aspect - 4.5, 1.5 - aspect)))
+        boundary_evidence = candidate.boundary_supported * min(1.0, evidence / 0.30)
+        candidate.score = float((0.60 * evidence + 0.15 * candidate.score + 0.25 * boundary_evidence) * aspect_evidence)
+
     candidates.sort(key=lambda item: item.score, reverse=True)
     unique: list[PlateCandidate] = []
     for candidate in candidates:
@@ -543,21 +626,46 @@ def _edge_correspondences(
         normal = np.array([-vector[1], vector[0]], dtype=np.float32) / length
         dst_start = destination_corners[edge_index]
         dst_end = destination_corners[(edge_index + 1) % 4]
-        for t in np.linspace(0.0, 1.0, samples_per_edge):
+        for t in np.linspace(0.08, 0.92, samples_per_edge):
             expected = start + vector * t
-            best = expected
-            best_strength = -1
-            for offset in range(-search_radius, search_radius + 1):
+            best = None
+            # Prefer the closest observed edge; empty neighborhoods contribute
+            # no correspondence instead of inventing one at the search limit.
+            for offset in sorted(range(-search_radius, search_radius + 1), key=abs):
                 probe = expected + normal * offset
                 px, py = int(round(probe[0])), int(round(probe[1]))
                 if 0 <= px < edges.shape[1] and 0 <= py < edges.shape[0]:
-                    strength = int(edges[py, px])
-                    if strength > best_strength:
-                        best_strength = strength
+                    if edges[py, px] > 0:
                         best = probe
+                        break
+            if best is None:
+                continue
             source_points.append(best)
             destination_points.append(dst_start + (dst_end - dst_start) * t)
-    return np.asarray(source_points, np.float32), np.asarray(destination_points, np.float32)
+    return np.asarray(source_points, np.float32).reshape(-1, 2), np.asarray(destination_points, np.float32).reshape(-1, 2)
+
+
+def _homography_is_safe(homography: np.ndarray | None, quad: np.ndarray, destination: np.ndarray) -> bool:
+    """Reject reflections, a horizon through the plate, and excessive corner drift.
+
+    This verifies a transform relative to the supplied corners; it cannot prove
+    that the supplied quadrilateral is a license plate or has correct corners.
+    """
+    if homography is None or not np.isfinite(homography).all():
+        return False
+    homogeneous = np.column_stack((quad, np.ones(4))) @ homography.T
+    denominator = homogeneous[:, 2]
+    if np.min(np.abs(denominator)) < 1e-9 or not (np.all(denominator > 0) or np.all(denominator < 0)):
+        return False
+    projected = (homogeneous[:, :2] / denominator[:, None]).astype(np.float32)
+    if not np.isfinite(projected).all() or not cv2.isContourConvex(projected):
+        return False
+    if cv2.contourArea(projected, oriented=True) * cv2.contourArea(destination, oriented=True) <= 0:
+        return False
+    dimensions = np.maximum(destination[2] - destination[0], 1)
+    drift = np.abs(projected - destination) / dimensions
+    area_ratio = abs(cv2.contourArea(projected)) / max(1.0, abs(cv2.contourArea(destination)))
+    return bool(np.max(drift) <= 0.18 and np.mean(drift) <= 0.08 and 0.70 <= area_ratio <= 1.35)
 
 
 def _feature_match_homography(
@@ -664,10 +772,11 @@ def _feature_match_homography(
         reason = f"RANSAC inliers มีเพียง {inliers}/{len(good_matches)} จุด"
         return _FeatureMatchResult(None, source_count, target_count, len(good_matches), inliers, inlier_ratio, visualization, reason)
 
-    projected = cv2.perspectiveTransform(quad.reshape(-1, 1, 2), homography).reshape(4, 2)
-    diagonal = float(np.linalg.norm(destination_quad[2] - destination_quad[0]))
-    mean_corner_error = float(np.linalg.norm(projected - destination_quad, axis=1).mean())
-    if not cv2.isContourConvex(np.round(projected).astype(np.int32)) or mean_corner_error > diagonal * 0.22:
+    inlier_source = source_points[inlier_flags].reshape(-1, 2)
+    inlier_target = target_points[inlier_flags].reshape(-1, 2)
+    source_coverage = abs(cv2.contourArea(cv2.convexHull(inlier_source))) / max(1.0, abs(cv2.contourArea(quad)))
+    target_coverage = abs(cv2.contourArea(cv2.convexHull(inlier_target))) / max(1.0, abs(cv2.contourArea(destination_quad)))
+    if min(source_coverage, target_coverage) < 0.04 or not _homography_is_safe(homography, quad, destination_quad):
         reason = "Homography จาก feature matches บิดรูปเกินเกณฑ์ความปลอดภัย"
         return _FeatureMatchResult(None, source_count, target_count, len(good_matches), inliers, inlier_ratio, visualization, reason)
 
@@ -690,6 +799,8 @@ def rectify_plate(
         raise ValueError("RANSAC threshold ต้องอยู่ระหว่าง 0.5 ถึง 20 pixels")
 
     quad = order_points(points)
+    if np.any(quad < 0) or np.any(quad[:, 0] > image.shape[1] - 1) or np.any(quad[:, 1] > image.shape[0] - 1):
+        raise ValueError("มุมป้ายอยู่นอกภาพ กรุณาปรับพิกัดมุม")
     widths = [np.linalg.norm(quad[1] - quad[0]), np.linalg.norm(quad[2] - quad[3])]
     heights = [np.linalg.norm(quad[3] - quad[0]), np.linalg.norm(quad[2] - quad[1])]
     target_width = int(np.clip(round(max(widths)), 120, 1200))
@@ -719,6 +830,7 @@ def rectify_plate(
         ransac_threshold,
     )
 
+    geometry_warning = None
     if feature_result.homography is not None:
         homography = feature_result.homography
         inliers = feature_result.inliers
@@ -727,17 +839,19 @@ def rectify_plate(
     else:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         source, destination = _edge_correspondences(gray, quad, target_width, target_height)
-        homography, mask = cv2.findHomography(source, destination, cv2.RANSAC, 3.5)
+        homography, mask = (cv2.findHomography(source, destination, cv2.RANSAC, 3.5)
+                            if len(source) >= 8 else (None, None))
         inliers = int(mask.sum()) if mask is not None else 0
         correspondences = len(source)
         minimum_inliers = max(8, int(len(source) * 0.45))
-        if homography is not None and np.isfinite(homography).all() and inliers >= minimum_inliers:
+        if inliers >= minimum_inliers and _homography_is_safe(homography, quad, destination_quad):
             method = "RANSAC edge fallback"
         else:
             homography = corner_homography
             inliers = 4
             correspondences = 4
             method = "4-corner fallback"
+            geometry_warning = "จุดขอบไม่เพียงพอหรือผล RANSAC บิดรูปเกินเกณฑ์ จึงใช้มุมป้าย 4 จุด กรุณาตรวจว่าขอบป้ายและตัวอักษรครบ"
 
     rectified = cv2.warpPerspective(
         image,
@@ -746,6 +860,9 @@ def rectify_plate(
         flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_REPLICATE,
     )
+    quality_warnings = []
+    if min(widths) < 90 or min(heights) < 28:
+        quality_warnings.append("ป้ายในภาพต้นฉบับมีขนาดเล็ก การขยายภาพไม่สามารถกู้รายละเอียดตัวอักษรที่หายไปได้")
     return RectificationResult(
         image=rectified,
         homography=homography,
@@ -761,6 +878,8 @@ def rectify_plate(
         ratio_threshold=ratio_threshold,
         match_visualization=feature_result.visualization,
         feature_failure_reason=feature_result.failure_reason,
+        geometry_warning=geometry_warning,
+        quality_warnings=tuple(quality_warnings),
     )
 
 

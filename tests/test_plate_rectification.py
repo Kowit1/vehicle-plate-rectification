@@ -1,9 +1,13 @@
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 
 from plate_rectification import (
+    _edge_correspondences,
+    _homography_is_safe,
+    _plate_character_evidence,
     _text_quad_from_contour,
     crop_plate,
     decode_image,
@@ -33,6 +37,54 @@ def synthetic_vehicle() -> tuple[np.ndarray, np.ndarray]:
 
 
 class PlatePipelineTests(unittest.TestCase):
+    def test_character_evidence_prefers_complete_plate_to_blank_window(self):
+        image, quad = synthetic_vehicle()
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blank_quad = np.float32([[200, 210], [900, 210], [900, 330], [200, 330]])
+        self.assertGreater(_plate_character_evidence(gray, quad), _plate_character_evidence(gray, blank_quad) + 0.30)
+
+    def test_empty_edges_do_not_create_artificial_correspondences(self):
+        gray = np.full((240, 500), 210, np.uint8)
+        quad = np.float32([[80, 70], [420, 70], [420, 175], [80, 175]])
+        source, destination = _edge_correspondences(gray, quad, 340, 105)
+        self.assertEqual(source.shape, (0, 2))
+        self.assertEqual(destination.shape, (0, 2))
+
+    def test_homography_rejects_reflection_and_large_drift(self):
+        quad = np.float32([[0, 0], [300, 0], [300, 100], [0, 100]])
+        self.assertTrue(_homography_is_safe(np.eye(3), quad, quad))
+        for matrix in [np.float64([[-1, 0, 300], [0, 1, 0], [0, 0, 1]]),
+                       np.float64([[1, 0, 0], [0, 1, 40], [0, 0, 1]]),
+                       np.float64([[1, 0, 0], [0, 1, 0], [-0.01, 0, 1]]),
+                       np.full((3, 3), np.nan)]:
+            with self.subTest(matrix=matrix):
+                self.assertFalse(_homography_is_safe(matrix, quad, quad))
+
+    def test_bad_edge_transform_is_rejected_despite_many_inliers(self):
+        image = np.full((240, 500, 3), 210, np.uint8)
+        quad = np.float32([[80, 70], [420, 70], [420, 175], [80, 175]])
+        correspondences = np.tile(quad, (3, 1))
+        with patch('plate_rectification._edge_correspondences', return_value=(correspondences, correspondences)), \
+                patch('plate_rectification.cv2.findHomography', return_value=(np.eye(3), np.ones((12, 1), np.uint8))):
+            result = rectify_plate(image, quad)
+        self.assertEqual(result.method, '4-corner fallback')
+        self.assertIsNotNone(result.geometry_warning)
+        destination = np.float32([[0, 0], [339, 0], [339, 104], [0, 104]])
+        projected = cv2.perspectiveTransform(quad.reshape(-1, 1, 2), result.homography).reshape(4, 2)
+        np.testing.assert_allclose(projected, destination, atol=1e-4)
+
+    def test_invalid_manual_corners_are_rejected(self):
+        for quad in [np.float32([[0, 0], [100, 0], [100, 0], [0, 50]]),
+                     np.float32([[0, 0], [100, 0], [20, 20], [0, 100]])]:
+            with self.subTest(quad=quad), self.assertRaises(ValueError):
+                order_points(quad)
+        with self.assertRaises(ValueError):
+            rectify_plate(np.zeros((100, 200, 3), np.uint8), np.float32([[-5, 5], [90, 5], [90, 50], [5, 50]]))
+
+    def test_small_plate_discloses_resolution_limit(self):
+        result = rectify_plate(np.full((100, 200, 3), 210, np.uint8), np.float32([[50, 40], [110, 40], [110, 60], [50, 60]]))
+        self.assertTrue(result.quality_warnings)
+
     def test_point_ordering(self):
         shuffled = [[90, 70], [10, 10], [10, 70], [90, 10]]
         ordered = order_points(shuffled)

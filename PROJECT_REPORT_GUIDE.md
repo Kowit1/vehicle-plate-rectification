@@ -74,7 +74,7 @@ Test with vehicle images that vary in:
 | Lighting | Bright, normal, dark, reflected light |
 | Image quality | Sharp, noisy, motion blur |
 
-Record the selected bounding box, confidence score, number of source/reference keypoints, good matches after the ratio test, RANSAC inlier count and ratio, processing time, fallback method, and whether the final plate is visually rectified without cutting off characters.
+Record the selected bounding box, ranking score (not a calibrated confidence percentage), number of source/reference keypoints, good matches after the ratio test, RANSAC inlier count and ratio, processing time, fallback method, and whether the final plate is visually rectified without cutting off characters. Report box localization separately from corner accuracy and OCR readiness. See [EVALUATION.md](EVALUATION.md) for the external-image baseline and held-out results.
 
 ## 7. Failure handling
 
@@ -83,6 +83,7 @@ Record the selected bounding box, confidence score, number of source/reference k
 - If automatic corners are inaccurate, allow manual coordinate correction.
 - If feature descriptors or good matches are insufficient, disclose the reason and use edge RANSAC.
 - If edge RANSAC is also unstable, use the disclosed four-corner fallback.
+- Validate both RANSAC paths for corner drift, reflections, area distortion, and a projective horizon crossing the plate. Missing image edges must not produce invented correspondences.
 - Do not claim OCR accuracy because OCR is outside the core scope of this project.
 
 ## 8. Suggested five-person responsibility split
