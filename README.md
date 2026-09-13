@@ -50,5 +50,3 @@ python -m unittest discover -s tests -v
 - `plate_rectification.py` — detection, RANSAC homography, perspective transform และ preprocessing
 - `tests/test_plate_rectification.py` — unit/integration tests ของ pipeline
 - `.streamlit/config.toml` — theme และขนาดไฟล์อัปโหลด
-
-ไฟล์ Vite/OpenCV.js เดิมยังเก็บไว้ชั่วคราวเป็น prototype อ้างอิง แต่แอปหลักสำหรับใช้งานและ deploy คือ `app.py`
