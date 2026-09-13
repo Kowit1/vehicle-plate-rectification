@@ -16,25 +16,18 @@ document.querySelector('#app').innerHTML = `
   <main id="top">
     <section class="hero">
       <div>
-        <p class="eyebrow">VEHICLE PLATE RECTIFICATION</p>
-        <h1>ปรับป้ายทะเบียนเอียง<br><em>ด้วย Feature Matching</em></h1>
-        <p class="hero-copy">จับคู่จุดเด่นระหว่างภาพป้ายที่เอียงกับภาพอ้างอิงหน้าตรง ใช้ RANSAC หา Homography แล้วแปลง Perspective ให้ป้ายกลับมาตรง</p>
-      </div>
-      <div class="workflow-steps" aria-label="ขั้นตอนใช้งาน">
-        <div><b>1</b><span><strong>ใส่ภาพคู่</strong><small>ภาพเอียง + ภาพอ้างอิง</small></span></div>
-        <i></i>
-        <div><b>2</b><span><strong>จับคู่จุดเด่น</strong><small>ORB + Ratio test</small></span></div>
-        <i></i>
-        <div><b>3</b><span><strong>ปรับให้ตรง</strong><small>RANSAC + Homography</small></span></div>
+        <p class="eyebrow">PLATERECT</p>
+        <h1>ปรับป้ายเอียงให้ตรง</h1>
+        <p class="hero-copy">เลือกรูปป้ายที่เอียงและรูปหน้าตรงของป้ายเดียวกัน แล้วให้ระบบปรับ Perspective ให้อัตโนมัติ</p>
       </div>
     </section>
 
     <div id="runtime-status" class="runtime-status loading"><span class="pulse"></span><strong>กำลังเตรียมระบบตรวจจับ</strong><small>รอสักครู่ก่อนเลือกรูป…</small></div>
 
     <nav class="tabs" aria-label="Application modes">
-      <button class="tab active" data-tab="matching">ปรับภาพเอียงตามโจทย์</button>
-      <button class="tab" data-tab="automatic">โหมดเลือก 4 มุม</button>
-      <button class="tab" data-tab="method">หลักการทำงาน</button>
+      <button class="tab active" data-tab="matching">ปรับภาพ</button>
+      <button class="tab" data-tab="automatic">เลือก 4 มุมเอง</button>
+      <button class="tab" data-tab="method">เกี่ยวกับวิธีทำงาน</button>
     </nav>
 
     <section id="automatic" class="panel">
@@ -107,35 +100,43 @@ document.querySelector('#app').innerHTML = `
 
     <section id="matching" class="panel active">
       <div class="section-head">
-        <div><p class="step">โหมดหลักตามโจทย์ CP461</p><h2>ปรับภาพป้ายเอียงให้เป็นหน้าตรง</h2><p>ใช้ภาพของ <strong>ป้ายทะเบียนเดียวกัน</strong> สองมุม เพื่อให้ ORB จับคู่จุดและ RANSAC คำนวณ Homography</p></div>
-        <button id="run-matching" class="button primary run-large" disabled>ปรับภาพให้ตรง</button>
+        <div><p class="step">ขั้นตอนที่ 1</p><h2>เลือกรูปสองรูป</h2><p>รูปทั้งสองต้องเป็น <strong>ป้ายทะเบียนเดียวกัน</strong> เพื่อให้ระบบจับคู่รายละเอียดได้</p></div>
       </div>
-      <div class="requirement-note"><span>!</span><p><strong>ทำไมต้องเป็นป้ายเดียวกัน?</strong> Feature Matching ต้องอาศัยตัวอักษรและรายละเอียดที่เหมือนกัน หากใช้คนละเลขทะเบียนจะจับคู่ไม่สำเร็จ</p></div>
-      <div class="two-up">
+      <div class="two-up simple-pair-grid">
         <article class="card input-pair-card">
           <div class="pair-number">1</div>
-          <div class="card-title"><span>ภาพป้ายที่เอียง (Query)</span><label class="mini-upload">เปลี่ยนรูป<input id="query-upload" type="file" accept="image/*" hidden></label></div>
-          <canvas id="query-canvas"></canvas><small>ภาพจากรถหรือกล้องที่มี Perspective distortion</small>
+          <div class="card-title"><span>ภาพที่เอียง</span><label class="button secondary choose-file">เลือกรูป<input id="query-upload" type="file" accept="image/*" hidden></label></div>
+          <canvas id="query-canvas"></canvas><small>ภาพจากมุมกล้องหรือภาพรถที่เห็นป้ายเอียง</small>
         </article>
         <article class="card input-pair-card">
           <div class="pair-number">2</div>
-          <div class="card-title"><span>ภาพหน้าตรง (Reference)</span><label class="mini-upload">เปลี่ยนรูป<input id="reference-upload" type="file" accept="image/*" hidden></label></div>
-          <canvas id="reference-canvas"></canvas><small>ภาพหน้าตรงของป้ายเดียวกัน ใช้เป็นระนาบปลายทาง</small>
+          <div class="card-title"><span>ภาพหน้าตรง</span><label class="button secondary choose-file">เลือกรูป<input id="reference-upload" type="file" accept="image/*" hidden></label></div>
+          <canvas id="reference-canvas"></canvas><small>ภาพอ้างอิงหน้าตรงของป้ายเดียวกัน</small>
         </article>
       </div>
-      <div class="control-strip">
-        <label><span>Lowe ratio threshold <output id="ratio-value">0.75</output></span><input id="ratio" type="range" min="0.55" max="0.90" value="0.75" step="0.01"></label>
-        <label><span>RANSAC reprojection threshold <output id="ransac-value">4.0 px</output></span><input id="ransac" type="range" min="1" max="10" value="4" step="0.5"></label>
-        <div class="method-pill"><small>Detector / matcher</small><strong>ORB · Hamming KNN</strong></div>
+      <div class="primary-action-row">
+        <span>ภาพตัวอย่างพร้อมใช้งาน หรือเลือกรูปของคุณแทนได้</span>
+        <button id="run-matching" class="button primary run-large" disabled>ปรับป้ายให้ตรง</button>
       </div>
       <div id="match-feedback" class="feedback neutral">ภาพตัวอย่างพร้อมแล้ว กด “ปรับภาพให้ตรง” เพื่อดูผลลัพธ์</div>
-      <div class="metric-grid five" id="match-metrics">
-        <div><small>Query keypoints</small><strong>—</strong></div><div><small>Reference keypoints</small><strong>—</strong></div><div><small>Good matches</small><strong>—</strong></div><div><small>RANSAC inliers</small><strong>—</strong></div><div><small>Inlier ratio</small><strong>—</strong></div>
-      </div>
-      <div class="two-up outputs">
-        <article class="card"><div class="card-title"><span>คู่จุดที่ผ่าน RANSAC</span><small>เส้นแต่ละเส้นคือ Inlier match</small></div><div class="canvas-well large"><canvas id="matches-output"></canvas><p class="placeholder">กดปรับภาพเพื่อดูจุดที่จับคู่ได้</p></div></article>
-        <article class="card match-result-card"><span class="recommend-badge">ผลลัพธ์หลัก</span><div class="card-title"><span>ภาพที่ปรับให้ตรงแล้ว</span><small>Warped ด้วย Homography</small></div><div class="canvas-well large"><canvas id="match-output"></canvas><p class="placeholder">ภาพที่ปรับตรงจะแสดงที่นี่</p></div><a id="download-match" class="download disabled" download="homography-rectified-plate.png">ดาวน์โหลดภาพที่ปรับตรง <b>↓</b></a><pre id="homography-matrix">Homography matrix: —</pre></article>
-      </div>
+
+      <section id="match-result-section" class="match-result-section" hidden>
+        <div class="result-heading"><div><span class="success-mark">✓</span><span><strong>ปรับภาพเรียบร้อย</strong><small>ภาพเอียงถูกแปลงไปยังระนาบหน้าตรงแล้ว</small></span></div></div>
+        <article class="card match-result-card"><div class="card-title"><span>ผลลัพธ์</span><small>Homography rectification</small></div><div class="canvas-well large"><canvas id="match-output"></canvas><p class="placeholder">ภาพที่ปรับตรงจะแสดงที่นี่</p></div><a id="download-match" class="download disabled" download="homography-rectified-plate.png">ดาวน์โหลดภาพที่ปรับตรง <b>↓</b></a></article>
+      </section>
+
+      <details class="advanced-details matching-advanced">
+        <summary>ตัวเลือกและผลทางเทคนิค</summary>
+        <div class="control-strip">
+          <label><span>Lowe ratio threshold <output id="ratio-value">0.75</output></span><input id="ratio" type="range" min="0.55" max="0.90" value="0.75" step="0.01"></label>
+          <label><span>RANSAC threshold <output id="ransac-value">4.0 px</output></span><input id="ransac" type="range" min="1" max="10" value="4" step="0.5"></label>
+          <div class="method-pill"><small>Detector / matcher</small><strong>ORB · Hamming KNN</strong></div>
+        </div>
+        <div class="metric-grid five" id="match-metrics">
+          <div><small>Query keypoints</small><strong>—</strong></div><div><small>Reference keypoints</small><strong>—</strong></div><div><small>Good matches</small><strong>—</strong></div><div><small>RANSAC inliers</small><strong>—</strong></div><div><small>Inlier ratio</small><strong>—</strong></div>
+        </div>
+        <article class="card matches-card"><div class="card-title"><span>คู่จุดที่ผ่าน RANSAC</span><small>Inlier matches</small></div><div class="canvas-well large"><canvas id="matches-output"></canvas><p class="placeholder">กดปรับภาพเพื่อดูจุดที่จับคู่ได้</p></div><pre id="homography-matrix">Homography matrix: —</pre></article>
+      </details>
     </section>
 
     <section id="method" class="panel">
@@ -449,6 +450,7 @@ for (const [inputSelector, canvasSelector] of [['#query-upload', '#query-canvas'
     document.querySelectorAll('#matching .canvas-well .placeholder').forEach((placeholder) => { placeholder.hidden = false })
     fillMetrics('#match-metrics', ['—', '—', '—', '—', '—'])
     $('#homography-matrix').textContent = 'Homography matrix: —'
+    $('#match-result-section').hidden = true
     $('#download-match').removeAttribute('href')
     $('#download-match').classList.add('disabled')
     setFeedback('#match-feedback', 'เปลี่ยนรูปแล้ว กด “ปรับภาพให้ตรง” เพื่อคำนวณ ORB + RANSAC ใหม่', 'neutral')
@@ -469,6 +471,7 @@ $('#run-matching').addEventListener('click', () => {
       Number($('#ransac').value),
     )
     document.querySelectorAll('#matching .canvas-well .placeholder').forEach((p) => { p.hidden = true })
+    $('#match-result-section').hidden = false
     enableDownload('#download-match', $('#match-output'))
     fillMetrics('#match-metrics', [result.queryKeypoints, result.referenceKeypoints, result.goodMatches, result.inliers, `${(result.inlierRatio * 100).toFixed(1)}%`])
     const rows = [0, 1, 2].map((row) => result.homography.slice(row * 3, row * 3 + 3).map((v) => v.toFixed(5)).join('   '))
@@ -476,6 +479,7 @@ $('#run-matching').addEventListener('click', () => {
     setFeedback('#match-feedback', `ปรับภาพเอียงสำเร็จ — พบ ${result.inliers} inliers จาก ${result.goodMatches} good matches`, 'success')
   } catch (error) {
     fillMetrics('#match-metrics', ['—', '—', '—', '—', '—'])
+    $('#match-result-section').hidden = true
     $('#download-match').removeAttribute('href')
     $('#download-match').classList.add('disabled')
     setFeedback('#match-feedback', `${error.message} กรุณาตรวจว่าเป็นป้ายเดียวกัน ภาพไม่เบลอเกินไป หรือเพิ่ม Lowe ratio เล็กน้อย`, 'error')
