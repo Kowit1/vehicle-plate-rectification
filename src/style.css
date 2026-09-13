@@ -192,6 +192,15 @@ h1 { font-size: clamp(36px, 4.5vw, 58px); margin: 9px 0 16px; }
 }
 
 /* Simplified primary workflow */
+.comparison-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.comparison-grid .card-title { display: block; }
+.comparison-grid .card-title small { display: block; margin-top: 6px; }
+.comparison-grid .canvas-well { min-height: 140px; }
+.pipeline-note { padding: 0 16px; color: #92a6b0; font-size: 12px; line-height: 1.7; }
+#auto-preview { width: auto; max-width: 100%; max-height: 570px; height: auto; object-fit: initial; }
+#image-controls .card-title { flex-wrap: wrap; gap: 10px; }
+.tabs .tab:not(.active) { font-size: 11px; }
+@media (max-width: 700px) { .comparison-grid { grid-template-columns: 1fr; } }
 main { width: min(980px, 100%); }
 .site-header { padding-inline: max(20px, calc((100vw - 980px) / 2)); }
 .hero { display: block; padding: 34px 0 20px; }

@@ -18,23 +18,23 @@ document.querySelector('#app').innerHTML = `
       <div>
         <p class="eyebrow">PLATERECT</p>
         <h1>ปรับป้ายเอียงให้ตรง</h1>
-        <p class="hero-copy">เลือกรูปป้ายที่เอียงและรูปหน้าตรงของป้ายเดียวกัน แล้วให้ระบบปรับ Perspective ให้อัตโนมัติ</p>
+        <p class="hero-copy">อัปโหลดภาพรถหรือภาพนิ่งจาก CCTV เพียงรูปเดียว ระบบจะค้นหาป้าย ตัดภาพ และปรับมุมให้ตรงเพื่อเตรียมอ่านตัวอักษร</p>
       </div>
     </section>
 
     <div id="runtime-status" class="runtime-status loading"><span class="pulse"></span><strong>กำลังเตรียมระบบตรวจจับ</strong><small>รอสักครู่ก่อนเลือกรูป…</small></div>
 
     <nav class="tabs" aria-label="Application modes">
-      <button class="tab active" data-tab="matching">ปรับภาพ</button>
-      <button class="tab" data-tab="automatic">เลือก 4 มุมเอง</button>
-      <button class="tab" data-tab="method">เกี่ยวกับวิธีทำงาน</button>
+      <button class="tab active" data-tab="automatic">ภาพรถ → ป้ายหน้าตรง</button>
+      <button class="tab" data-tab="matching">แล็บจับคู่ภาพ (เสริม)</button>
+      <button class="tab" data-tab="method">วิธีทำงาน</button>
     </nav>
 
-    <section id="automatic" class="panel">
+    <section id="automatic" class="panel active">
       <div class="section-head">
         <div><p class="step">เริ่มต้นที่นี่</p><h2>เลือกรูปรถที่เห็นป้ายทะเบียน</h2><p>แนะนำรูปที่ป้ายไม่เล็กหรือเบลอจนเกินไป รองรับ JPG, PNG และภาพจากกล้องมือถือ</p></div>
         <div class="actions">
-          <button id="auto-demo" class="button ghost">ลองภาพตัวอย่าง</button>
+          <button id="auto-demo" class="button ghost" disabled>ลองภาพตัวอย่าง</button>
         </div>
       </div>
 
@@ -51,7 +51,7 @@ document.querySelector('#app').innerHTML = `
             <small>รูปจะประมวลผลบนอุปกรณ์ของคุณเท่านั้น</small>
           </div>
           <div id="image-controls" hidden>
-            <div class="card-title"><span>1. ตรวจกรอบป้าย</span><small id="image-meta">รูปที่เลือก</small></div>
+            <div class="card-title"><span>ภาพรถต้นฉบับ</span><small id="image-meta">รูปที่เลือก</small><button id="replace-vehicle" class="button secondary">เปลี่ยนรูป</button></div>
           </div>
           <canvas id="auto-source" hidden></canvas>
           <canvas id="auto-preview" class="main-canvas" aria-label="Vehicle input image"></canvas>
@@ -70,19 +70,22 @@ document.querySelector('#app').innerHTML = `
         </article>
       </div>
 
-      <div id="auto-feedback" class="feedback neutral">พร้อมใช้งาน — เลือกรูปเพื่อเริ่มต้น</div>
+      <div id="auto-feedback" class="feedback neutral" role="status" aria-live="polite">เลือกรูปรถหนึ่งรูปเพื่อเริ่มต้น</div>
 
       <section id="results-section" class="results-section" hidden>
-        <div class="result-heading"><div><span class="success-mark">✓</span><span><strong>2. ได้ผลลัพธ์แล้ว</strong><small>ตรวจดูภาพและเลือกไฟล์ที่ต้องการ</small></span></div><label class="button secondary">เปลี่ยนรูป<input class="vehicle-replace" type="file" accept="image/*" hidden></label></div>
-        <div class="workspace-grid">
+        <div class="result-heading"><div><span class="success-mark">✓</span><span><strong>เปรียบเทียบก่อนและหลังปรับ</strong><small>ตรวจว่าครอบป้ายถูกตำแหน่งก่อนดาวน์โหลด</small></span></div><label class="button secondary">เปลี่ยนรูป<input class="vehicle-replace" type="file" accept="image/*" hidden></label></div>
+        <div class="workspace-grid comparison-grid">
           <article class="card result-card">
-            <div class="card-title"><span>ป้ายที่ปรับตรงแล้ว</span><small>ภาพสี · Perspective transform</small></div>
+            <div class="card-title"><span>1. ป้ายก่อนปรับ</span><small>ตัดจากภาพรถ</small></div>
+            <div class="canvas-well"><canvas id="plate-before"></canvas><p class="placeholder">บริเวณป้ายต้นฉบับ</p></div>
+          </article>
+          <article class="card result-card">
+            <div class="card-title"><span>2. ป้ายหลังปรับ</span><small>แก้ Perspective</small></div>
             <div class="canvas-well"><canvas id="rectified-output"></canvas><p class="placeholder">ผลลัพธ์จะแสดงที่นี่</p></div>
             <a id="download-rectified" class="download disabled" download="rectified-plate.png">ดาวน์โหลดภาพสี <b>↓</b></a>
           </article>
           <article class="card result-card recommended">
-            <span class="recommend-badge">แนะนำสำหรับ OCR</span>
-            <div class="card-title"><span>ภาพพร้อมอ่านตัวอักษร</span><small>เพิ่ม contrast · ลด noise</small></div>
+            <div class="card-title"><span>3. เตรียมสำหรับ OCR</span><small>ขาวดำ · เพิ่ม contrast · ลด noise</small></div>
             <div class="canvas-well"><canvas id="ocr-output"></canvas><p class="placeholder">ผลลัพธ์จะแสดงที่นี่</p></div>
             <a id="download-ocr" class="download disabled" download="ocr-ready-plate.png">ดาวน์โหลด OCR-ready <b>↓</b></a>
           </article>
@@ -91,6 +94,7 @@ document.querySelector('#app').innerHTML = `
 
       <details class="advanced-details">
         <summary>ดูรายละเอียดทางเทคนิค</summary>
+        <p class="pipeline-note">ตรวจขอบและมุมป้าย → Homography จาก 4 มุม → Perspective Warp → Grayscale และลด Noise โหมดภาพเดียวนี้ไม่ได้ใช้ Feature Matching หรือ RANSAC และยังไม่มีระบบอ่านเลขทะเบียน</p>
         <div class="metric-grid" id="auto-metrics">
           <div><small>Candidate score</small><strong>—</strong></div><div><small>Aspect ratio</small><strong>—</strong></div><div><small>Image coverage</small><strong>—</strong></div><div><small>Candidates</small><strong>—</strong></div>
         </div>
@@ -98,7 +102,7 @@ document.querySelector('#app').innerHTML = `
       </details>
     </section>
 
-    <section id="matching" class="panel active">
+    <section id="matching" class="panel">
       <div class="section-head">
         <div><p class="step">ขั้นตอนที่ 1</p><h2>เลือกรูปสองรูป</h2><p>รูปทั้งสองต้องเป็น <strong>ป้ายทะเบียนเดียวกัน</strong> เพื่อให้ระบบจับคู่รายละเอียดได้</p></div>
       </div>
@@ -140,7 +144,7 @@ document.querySelector('#app').innerHTML = `
     </section>
 
     <section id="method" class="panel">
-      <div class="section-head"><div><p class="step">MODE 03</p><h2>How the pipeline works</h2><p>Every stage maps directly to the CP461 evaluation rubric.</p></div></div>
+      <div class="section-head"><div><h2>จากภาพรถเป็นภาพป้ายหน้าตรง</h2><p>หน้าแรกใช้ภาพเดียว ตรวจขอบป้ายและประมาณ 4 มุมเพื่อแก้ Perspective ส่วนแล็บจับคู่ภาพเป็นการทดลอง ORB/RANSAC แยกต่างหาก</p></div></div>
       <div class="method-grid">
         <article><b>01</b><h3>Plate proposal</h3><p>Grayscale conversion, histogram equalization, Canny edges and morphological closing produce rectangular candidates.</p></article>
         <article><b>02</b><h3>ORB descriptors</h3><p>Oriented FAST keypoints and rotated BRIEF descriptors capture distinctive local patterns efficiently in the browser.</p></article>
@@ -155,7 +159,7 @@ document.querySelector('#app').innerHTML = `
   <footer><span>Vehicle Plate Rectification for LPR</span><span>Client-side OpenCV.js · No image uploads</span></footer>
 `
 
-const state = { cv: null, points: [], manual: false, candidates: [], candidateIndex: 0, draggingPoint: -1, hasImage: false }
+const state = { cv: null, points: [], manual: false, candidates: [], candidateIndex: 0, draggingPoint: -1, hasImage: false, revision: 0, busy: false }
 const $ = (selector) => document.querySelector(selector)
 
 function setFeedback(selector, message, type = 'neutral') {
@@ -227,6 +231,7 @@ function setImageLoaded(loaded) {
 }
 
 function clearAutomaticResults() {
+  clearCanvasOutput('#plate-before')
   clearCanvasOutput('#rectified-output')
   clearCanvasOutput('#ocr-output')
   $('#results-section').hidden = true
@@ -241,7 +246,14 @@ function clearAutomaticResults() {
 
 function applyRectification(points, candidateCount = 'Manual') {
   const result = rectifyPlate(state.cv, $('#auto-source'), $('#rectified-output'), points)
-  preprocessForOcr(state.cv, $('#rectified-output'), $('#ocr-output'))
+  preprocessForOcr(state.cv, $('#rectified-output'), $('#ocr-output'), 'grayscale')
+  const source = $('#auto-source')
+  const before = $('#plate-before')
+  const left = Math.max(0, Math.floor(Math.min(...points.map(p => p.x))))
+  const top = Math.max(0, Math.floor(Math.min(...points.map(p => p.y))))
+  before.width = Math.min(source.width - left, Math.ceil(Math.max(...points.map(p => p.x))) - left)
+  before.height = Math.min(source.height - top, Math.ceil(Math.max(...points.map(p => p.y))) - top)
+  before.getContext('2d').drawImage(source, left, top, before.width, before.height, 0, 0, before.width, before.height)
   document.querySelectorAll('#automatic .canvas-well .placeholder').forEach((p) => { p.hidden = true })
   $('#results-section').hidden = false
   enableDownload('#download-rectified', $('#rectified-output'))
@@ -256,8 +268,9 @@ function applyRectification(points, candidateCount = 'Manual') {
 }
 
 async function loadFileToCanvas(file, canvas, maxWidth = 1600) {
+  if (file.size > 25 * 1024 * 1024) throw new Error('กรุณาใช้รูปขนาดไม่เกิน 25 MB')
   const bitmap = await createImageBitmap(file)
-  const scale = Math.min(1, maxWidth / bitmap.width)
+  const scale = Math.min(1, maxWidth / Math.max(bitmap.width, bitmap.height))
   canvas.width = Math.round(bitmap.width * scale)
   canvas.height = Math.round(bitmap.height * scale)
   canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
@@ -269,8 +282,12 @@ async function useVehicleFile(file) {
     setFeedback('#auto-feedback', 'ไฟล์นี้ไม่ใช่รูปภาพ กรุณาเลือกไฟล์ JPG หรือ PNG', 'error')
     return
   }
+  const revision = ++state.revision
   try {
-    await loadFileToCanvas(file, $('#auto-source'))
+    const decoded = document.createElement('canvas')
+    await loadFileToCanvas(file, decoded, 2200)
+    if (revision !== state.revision) return
+    copyCanvas(decoded, $('#auto-source'))
   } catch {
     setFeedback('#auto-feedback', 'เปิดรูปนี้ไม่ได้ กรุณาลองบันทึกเป็น JPG หรือ PNG แล้วเลือกใหม่', 'error')
     return
@@ -288,6 +305,8 @@ async function useVehicleFile(file) {
 }
 
 function resetAutomaticDemo() {
+  if (!state.cv || state.busy) return
+  state.revision++
   createDemoAssets(state.cv, $('#auto-source'), $('#query-canvas'), $('#reference-canvas'))
   state.points = []
   state.manual = false
@@ -314,6 +333,7 @@ $('#ratio').addEventListener('input', (event) => { $('#ratio-value').textContent
 $('#ransac').addEventListener('input', (event) => { $('#ransac-value').textContent = `${Number(event.target.value).toFixed(1)} px` })
 
 $('#auto-demo').addEventListener('click', resetAutomaticDemo)
+$('#replace-vehicle').addEventListener('click', () => $('#auto-upload').click())
 $('#auto-upload').addEventListener('change', async (event) => {
   if (!event.target.files[0]) return
   await useVehicleFile(event.target.files[0])
@@ -356,13 +376,23 @@ function selectCandidate(index) {
   setFeedback('#auto-feedback', `พบกรอบที่เป็นไปได้ ${state.candidates.length} ตำแหน่ง — กำลังแสดงตำแหน่งที่ ${state.candidateIndex + 1} ลากจุดสีเขียวเพื่อปรับได้`, 'success')
 }
 
-function runAutomaticDetection() {
+async function runAutomaticDetection() {
+  if (state.busy || !state.hasImage) return
   if (!state.cv) {
     setFeedback('#auto-feedback', 'ระบบตรวจจับกำลังโหลด กรุณารอสักครู่', 'working')
     return
   }
   setFeedback('#auto-feedback', 'กำลังค้นหาป้ายทะเบียน…', 'working')
+  state.busy = true
+  const revision = state.revision
+  $('#auto-detect').disabled = true
+  clearAutomaticResults()
+  state.points = []
+  state.manual = false
+  renderCorners()
   try {
+    await new Promise(resolve => setTimeout(resolve, 30))
+    if (revision !== state.revision) return
     const result = detectPlate(state.cv, $('#auto-source'), $('#debug-output'))
     if (!result.candidate) throw new Error('ยังไม่พบป้ายอัตโนมัติ')
     state.candidates = result.candidates
@@ -371,6 +401,10 @@ function runAutomaticDetection() {
     state.candidates = []
     updateCandidateNavigation()
     setFeedback('#auto-feedback', `${error.message} — กด “เลือก 4 มุมเอง” แล้วแตะมุมป้ายทั้งสี่จุดได้เลย`, 'error')
+  } finally {
+    state.busy = false
+    $('#auto-detect').disabled = !state.hasImage || !state.cv
+    if (revision !== state.revision) runAutomaticDetection()
   }
 }
 
@@ -379,11 +413,12 @@ $('#previous-candidate').addEventListener('click', () => selectCandidate(state.c
 $('#next-candidate').addEventListener('click', () => selectCandidate(state.candidateIndex + 1))
 
 $('#manual-corners').addEventListener('click', () => {
+  clearAutomaticResults()
   state.points = []; state.manual = true; state.candidates = []; renderCorners(); updateCandidateNavigation()
   $('#image-meta').textContent = 'แตะมุมป้าย 4 จุด — เลือกลำดับไหนก็ได้'
   setFeedback('#auto-feedback', 'โหมดเลือกเอง: แตะมุมป้ายให้ครบ 4 จุด แล้วกด “ใช้กรอบนี้”', 'working')
 })
-$('#clear-corners').addEventListener('click', () => { state.points = []; state.manual = true; renderCorners() })
+$('#clear-corners').addEventListener('click', () => { clearAutomaticResults(); state.points = []; state.manual = true; renderCorners() })
 $('#auto-preview').addEventListener('click', (event) => {
   if (!state.manual || state.points.length >= 4) return
   const rect = event.currentTarget.getBoundingClientRect()
@@ -397,8 +432,8 @@ $('#auto-preview').addEventListener('click', (event) => {
 function pointerPosition(event) {
   const rect = event.currentTarget.getBoundingClientRect()
   return {
-    x: (event.clientX - rect.left) * event.currentTarget.width / rect.width,
-    y: (event.clientY - rect.top) * event.currentTarget.height / rect.height,
+    x: Math.max(0, Math.min(event.currentTarget.width - 1, (event.clientX - rect.left) * event.currentTarget.width / rect.width)),
+    y: Math.max(0, Math.min(event.currentTarget.height - 1, (event.clientY - rect.top) * event.currentTarget.height / rect.height)),
   }
 }
 
@@ -416,6 +451,7 @@ $('#auto-preview').addEventListener('pointerdown', (event) => {
     }
   })
   if (closest >= 0) {
+    clearAutomaticResults()
     state.draggingPoint = closest
     state.manual = true
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -489,15 +525,15 @@ $('#run-matching').addEventListener('click', () => {
 async function initialize() {
   try {
     state.cv = await loadOpenCv()
-    createDemoAssets(state.cv, $('#auto-source'), $('#query-canvas'), $('#reference-canvas'))
-    $('#auto-source').width = 0
-    $('#auto-source').height = 0
-    $('#auto-preview').width = 0
-    $('#auto-preview').height = 0
-    state.points = []
-    state.candidates = []
-    setImageLoaded(false)
-    clearAutomaticResults()
+    createDemoAssets(state.cv, document.createElement('canvas'), $('#query-canvas'), $('#reference-canvas'))
+    $('#auto-demo').disabled = false
+    if (state.hasImage) runAutomaticDetection()
+    else {
+      $('#auto-preview').width = 0
+      $('#auto-preview').height = 0
+      setImageLoaded(false)
+      clearAutomaticResults()
+    }
     $('#run-matching').disabled = false
     const status = $('#runtime-status')
     status.className = 'runtime-status ready'

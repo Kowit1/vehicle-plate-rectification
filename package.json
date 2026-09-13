@@ -13,6 +13,8 @@
     "@techstark/opencv-js": "5.0.0-release.1"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.9",
+    "happy-dom": "^20.14.5",
     "vite": "^7.1.5",
     "vitest": "^3.2.4"
   }

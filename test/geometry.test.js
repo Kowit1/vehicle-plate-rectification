@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { orderPoints, plateAspect, targetSize } from '../src/geometry.js'
 
 describe('geometry helpers', () => {
+  it('keeps four distinct corners when sums or differences tie', () => {
+    const ordered = orderPoints([{x:0,y:50},{x:50,y:0},{x:100,y:50},{x:50,y:100}])
+    expect(new Set(ordered.map(p => `${p.x},${p.y}`)).size).toBe(4)
+  })
+  it('rejects duplicate or collinear manual corners', () => {
+    expect(() => orderPoints([{x:0,y:0},{x:0,y:0},{x:20,y:20},{x:0,y:20}])).toThrow()
+    expect(() => orderPoints([{x:0,y:0},{x:10,y:0},{x:20,y:0},{x:30,y:0}])).toThrow()
+  })
   it('orders four shuffled corners clockwise from top-left', () => {
     const points = [{ x: 95, y: 85 }, { x: 10, y: 10 }, { x: 12, y: 88 }, { x: 98, y: 13 }]
     expect(orderPoints(points)).toEqual([

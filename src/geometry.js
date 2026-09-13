@@ -7,9 +7,19 @@ export function orderPoints(points) {
     throw new Error('Exactly four corner points are required.')
   }
   const pts = points.map(({ x, y }) => ({ x: Number(x), y: Number(y) }))
-  const bySum = [...pts].sort((a, b) => (a.x + a.y) - (b.x + b.y))
-  const byDiff = [...pts].sort((a, b) => (a.y - a.x) - (b.y - b.x))
-  return [bySum[0], byDiff[0], bySum[3], byDiff[3]]
+  if (pts.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) throw new Error('พิกัดมุมไม่ถูกต้อง')
+  const center = { x: pts.reduce((s, p) => s + p.x, 0) / 4, y: pts.reduce((s, p) => s + p.y, 0) / 4 }
+  pts.sort((a, b) => Math.atan2(a.y - center.y, a.x - center.x) - Math.atan2(b.y - center.y, b.x - center.x))
+  let start = 0
+  pts.forEach((p, i) => { if (p.x + p.y < pts[start].x + pts[start].y) start = i })
+  const ordered = pts.slice(start).concat(pts.slice(0, start))
+  for (let i = 0; i < 4; i++) {
+    const a = ordered[i], b = ordered[(i + 1) % 4], c = ordered[(i + 2) % 4]
+    if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) <= 1) {
+      throw new Error('เลือกมุมป้าย 4 จุดที่ไม่ซ้ำและไม่อยู่บนเส้นตรงเดียวกัน')
+    }
+  }
+  return ordered
 }
 
 export function targetSize(points) {

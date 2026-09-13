@@ -1,6 +1,10 @@
 # Vehicle Plate Rectification for LPR
 
-Tier 3 web application for **CP461: Introduction to Computer Vision**. It rectifies angled license plates and exposes the complete feature-matching pipeline in the browser.
+A browser application that accepts **one vehicle or CCTV still image**, proposes a plate region, rectifies its perspective and produces a grayscale image for downstream OCR. No frontal reference is required in the primary workflow. An optional two-image ORB/RANSAC lab is retained for experiments.
+
+Primary workflow: vehicle image → plate detection → original plate crop → four-corner homography → rectified color plate → grayscale, contrast enhancement and denoising → PNG download.
+
+The single-image path uses `getPerspectiveTransform` from detected corners, **not RANSAC homography estimation**. The optional lab uses `findHomography(..., RANSAC)` from feature correspondences. This distinction must be preserved in any project report; compliance with the original assignment PDF has not been verified.
 
 ## Live pipeline
 
@@ -17,7 +21,7 @@ Tier 3 web application for **CP461: Introduction to Computer Vision**. It rectif
 - Built-in reproducible demo and failure handling
 - Client-side processing: uploaded images never leave the browser
 
-The CP461 brief accepts **SIFT, SURF or ORB**. This Vercel-native version uses ORB because it is available in the official browser build of OpenCV.js and does not require a Python server.
+OpenCV.js runs locally in the browser without a Python server. Automated tests include real OpenCV detection/rectification on a synthetic angled vehicle image, blank-image rejection, and UI upload/initialization/failure-state tests. These tests do not establish accuracy on real CCTV footage.
 
 ## Run locally
 
@@ -63,18 +67,19 @@ No environment variables or server functions are required.
 
 ## Application modes
 
-### Feature Matching Rectification (primary assignment flow)
+### Single-image vehicle rectification (primary workflow)
+
+Upload or drop one vehicle image (up to 25 MB). The app automatically searches for a plate, marks the proposed corners, and displays the original cropped plate, rectified plate and grayscale OCR preparation side by side. Download either output as PNG. If the selected region is wrong, try another candidate or manually select and drag four corners. The change-image button stays available even when detection fails. Replacing an image or editing corners invalidates previous downloads.
+
+### Feature Matching Rectification (optional lab)
 
 Upload an angled query image and a frontal reference image of the **same physical plate**. ORB extracts local descriptors, KNN generates candidate matches, the ratio test removes ambiguous pairs, and RANSAC estimates the homography used to warp the angled query onto the frontal reference plane. The app exposes keypoint, match and inlier counts, the inlier visualization, the 3 x 3 homography matrix and a downloadable rectified result.
-
-### Four-corner rectification (fallback)
-
-Upload one vehicle/CCTV image. The app proposes a plate quadrilateral and estimates a perspective transform from its four corners. If automatic detection fails, choose **Select 4 corners manually**, then click the visible corners in this order: top-left, top-right, bottom-right, bottom-left.
 
 ## Honest limitations
 
 - Feature matching cannot use a blank generic plate template because different plate numbers do not share enough local features. It requires the same physical plate.
 - Automatic contour detection may fail on tiny, dark, blurred, borderless or heavily occluded plates.
+- This accepts still images; it does not connect to a live CCTV stream. Rectification cannot recover missing or unreadable characters. Output aspect is estimated from visible edge lengths, not a calibrated physical plate size.
 - OCR-ready preprocessing is included, but Thai OCR itself is intentionally outside the project scope.
 - Real evaluation should include different angles, distances, lighting, blur levels and explicit failure cases.
 
