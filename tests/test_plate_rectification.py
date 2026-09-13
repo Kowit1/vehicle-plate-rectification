@@ -65,12 +65,35 @@ class PlatePipelineTests(unittest.TestCase):
         self.assertTrue(np.isfinite(result.homography).all())
         self.assertGreaterEqual(result.inliers, 4)
 
-    def test_ransac_rectification_from_known_quad(self):
+    def test_sift_knn_ratio_and_ransac_from_known_quad(self):
         image, quad = synthetic_vehicle()
         result = rectify_plate(image, quad)
-        self.assertEqual(result.method, "RANSAC edge homography")
-        self.assertGreater(result.inliers, 8)
+        self.assertEqual(result.method, "SIFT + KNN ratio + RANSAC")
+        self.assertGreater(result.source_keypoints, 20)
+        self.assertGreater(result.target_keypoints, 20)
+        self.assertGreater(result.good_matches, 8)
+        self.assertGreater(result.feature_inliers, 6)
+        self.assertGreater(result.feature_inlier_ratio, 0.35)
+        self.assertIsNotNone(result.match_visualization)
         self.assertGreater(result.image.shape[1] / result.image.shape[0], 2.0)
+
+    def test_orb_is_supported_with_ratio_test_and_ransac(self):
+        image, quad = synthetic_vehicle()
+        result = rectify_plate(image, quad, feature_detector="ORB", ratio_threshold=0.80)
+        self.assertEqual(result.feature_detector, "ORB")
+        self.assertGreater(result.source_keypoints, 20)
+        self.assertGreater(result.good_matches, 8)
+        self.assertGreater(result.feature_inliers, 6)
+        self.assertIn(result.method, ["ORB + KNN ratio + RANSAC", "RANSAC edge fallback"])
+
+    def test_featureless_plate_uses_disclosed_fallback(self):
+        image = np.full((240, 500, 3), 210, np.uint8)
+        quad = np.array([[80, 70], [420, 70], [420, 175], [80, 175]], np.float32)
+        result = rectify_plate(image, quad)
+        self.assertIn(result.method, ["RANSAC edge fallback", "4-corner fallback"])
+        self.assertIsNotNone(result.feature_failure_reason)
+        self.assertEqual(result.good_matches, 0)
+        self.assertTrue(np.isfinite(result.homography).all())
 
     def test_large_grille_does_not_outrank_lower_plate(self):
         image = np.full((900, 900, 3), 185, dtype=np.uint8)

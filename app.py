@@ -66,6 +66,33 @@ except ValueError as error:
     st.error(str(error))
     st.stop()
 
+with st.expander("ตั้งค่าการจับคู่จุดตาม rubric"):
+    st.caption("ค่าเริ่มต้นเหมาะกับภาพทั่วไป ปรับเมื่ออยากสาธิตผลของ detector และ RANSAC")
+    setting_one, setting_two, setting_three = st.columns(3)
+    with setting_one:
+        feature_detector = st.selectbox(
+            "Feature detector",
+            ["SIFT", "ORB"],
+            help="SIFT ทนต่อการเปลี่ยนสเกลและมุมมองได้ดี ส่วน ORB ทำงานเร็วกว่า",
+        )
+    with setting_two:
+        ratio_threshold = st.slider(
+            "Lowe's ratio threshold",
+            min_value=0.55,
+            max_value=0.90,
+            value=0.75,
+            step=0.05,
+            help="ค่ายิ่งต่ำยิ่งคัดคู่ descriptor เข้มงวด",
+        )
+    with setting_three:
+        ransac_threshold = st.slider(
+            "RANSAC reprojection (px)",
+            min_value=1.0,
+            max_value=10.0,
+            value=4.0,
+            step=0.5,
+        )
+
 with st.spinner("กำลังตรวจหาป้ายทะเบียน…"):
     candidates, diagnostics = detect_plate_candidates(vehicle_image)
 
@@ -110,7 +137,13 @@ with st.expander("กรอบไม่ตรง? ปรับพิกัดม
 try:
     plate_points = order_points(manual_points if use_manual else candidate.points)
     before_crop = crop_plate(vehicle_image, plate_points)
-    result = rectify_plate(vehicle_image, plate_points)
+    result = rectify_plate(
+        vehicle_image,
+        plate_points,
+        feature_detector=feature_detector,
+        ratio_threshold=ratio_threshold,
+        ransac_threshold=ransac_threshold,
+    )
     ocr_ready = preprocess_for_ocr(result.image)
 except (ValueError, cv2.error) as error:
     st.error(f"ปรับภาพไม่สำเร็จ: {error}")
@@ -130,10 +163,21 @@ with overview:
         st.markdown("**3. ภาพพร้อม OCR**")
         st.image(ocr_ready, caption="Grayscale + Contrast + Denoise", width="stretch", clamp=True)
 
-    if result.method == "RANSAC edge homography":
-        st.success(f"ปรับป้ายด้วย Homography + RANSAC สำเร็จ — จุดที่ผ่าน {result.inliers}/{result.correspondences}")
+    if "+ KNN ratio + RANSAC" in result.method:
+        st.success(
+            f"ปรับป้ายด้วย {result.feature_detector} + KNN + Lowe's ratio test + RANSAC สำเร็จ "
+            f"— inliers {result.feature_inliers}/{result.good_matches}"
+        )
+    elif result.method == "RANSAC edge fallback":
+        st.warning(
+            f"Feature matching ยังไม่เสถียร ({result.feature_failure_reason}) "
+            f"จึงใช้ RANSAC จากขอบป้ายแทน — inliers {result.inliers}/{result.correspondences}"
+        )
     else:
-        st.warning("จุดขอบสำหรับ RANSAC ไม่เสถียร จึงใช้การแปลงจากมุมป้าย 4 จุดแทน")
+        st.warning(
+            f"Feature matching ยังไม่เสถียร ({result.feature_failure_reason}) "
+            "และจุดขอบไม่พอ จึงใช้ Perspective Transform จากมุมป้าย 4 จุดแทน"
+        )
 
     download_one, download_two = st.columns(2)
     with download_one:
@@ -143,10 +187,21 @@ with overview:
 
 with details:
     show_bgr(draw_detection(vehicle_image, plate_points), "กรอบที่นำไปประมวลผล")
-    detail_one, detail_two, detail_three = st.columns(3)
-    detail_one.metric("วิธีปรับภาพ", "RANSAC" if result.method.startswith("RANSAC") else "4 corners")
-    detail_two.metric("จุด Inlier", f"{result.inliers}/{result.correspondences}")
-    detail_three.metric("ขนาดป้ายผลลัพธ์", f"{result.image.shape[1]}×{result.image.shape[0]}")
+    detail_one, detail_two, detail_three, detail_four = st.columns(4)
+    detail_one.metric("Feature detector", result.feature_detector)
+    detail_two.metric("Keypoints", f"{result.source_keypoints} → {result.target_keypoints}")
+    detail_three.metric("Good matches", result.good_matches)
+    detail_four.metric("RANSAC inliers", f"{result.feature_inliers}/{result.good_matches}")
+    st.caption(
+        f"วิธีที่ใช้จริง: {result.method} · Lowe's ratio = {result.ratio_threshold:.2f} · "
+        f"Feature inlier ratio = {result.feature_inlier_ratio * 100:.1f}% · "
+        f"ผลลัพธ์ {result.image.shape[1]}×{result.image.shape[0]} px"
+    )
+    if result.match_visualization is not None:
+        st.markdown("**คู่จุดที่ผ่าน Lowe's ratio test และ RANSAC**")
+        show_bgr(result.match_visualization, "เส้นสีเขียวคือ inlier matches ที่ใช้คำนวณ Homography")
+    elif result.feature_failure_reason:
+        st.info(f"ไม่มีภาพคู่จุด: {result.feature_failure_reason}")
     with st.expander("ข้อมูลทางเทคนิค"):
         st.markdown("**Homography matrix**")
         st.code(np.array2string(result.homography, precision=5, suppress_small=True))

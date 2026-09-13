@@ -28,6 +28,27 @@ class RectificationResult:
     method: str
     inliers: int
     correspondences: int
+    feature_detector: str
+    source_keypoints: int
+    target_keypoints: int
+    good_matches: int
+    feature_inliers: int
+    feature_inlier_ratio: float
+    ratio_threshold: float
+    match_visualization: np.ndarray | None
+    feature_failure_reason: str | None
+
+
+@dataclass
+class _FeatureMatchResult:
+    homography: np.ndarray | None
+    source_keypoints: int
+    target_keypoints: int
+    good_matches: int
+    inliers: int
+    inlier_ratio: float
+    visualization: np.ndarray | None
+    failure_reason: str | None
 
 
 def decode_image(file_bytes: bytes, max_side: int = MAX_IMAGE_SIDE) -> np.ndarray:
@@ -386,8 +407,135 @@ def _edge_correspondences(
     return np.asarray(source_points, np.float32), np.asarray(destination_points, np.float32)
 
 
-def rectify_plate(image: np.ndarray, points: np.ndarray) -> RectificationResult:
-    """Estimate a robust edge homography and warp the plate into a front-facing view."""
+def _feature_match_homography(
+    image: np.ndarray,
+    quad: np.ndarray,
+    provisional: np.ndarray,
+    destination_quad: np.ndarray,
+    detector_name: str,
+    ratio_threshold: float,
+    ransac_threshold: float,
+) -> _FeatureMatchResult:
+    """Refine the plate homography using local features, KNN matching and RANSAC."""
+    detector_name = detector_name.upper()
+    x, y, width, height = cv2.boundingRect(quad.astype(np.int32))
+    padding = max(4, int(round(max(width, height) * 0.035)))
+    x0, y0 = max(0, x - padding), max(0, y - padding)
+    x1, y1 = min(image.shape[1], x + width + padding), min(image.shape[0], y + height + padding)
+    source_roi = image[y0:y1, x0:x1].copy()
+    if source_roi.size == 0 or provisional.size == 0:
+        return _FeatureMatchResult(None, 0, 0, 0, 0, 0.0, None, "พื้นที่ป้ายไม่ถูกต้อง")
+
+    local_quad = quad - np.array([x0, y0], dtype=np.float32)
+    source_mask = np.zeros(source_roi.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(source_mask, np.round(local_quad).astype(np.int32), 255)
+    target_mask = np.full(provisional.shape[:2], 255, dtype=np.uint8)
+
+    source_gray = cv2.cvtColor(source_roi, cv2.COLOR_BGR2GRAY)
+    target_gray = cv2.cvtColor(provisional, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    source_gray = clahe.apply(source_gray)
+    target_gray = clahe.apply(target_gray)
+
+    if detector_name == "SIFT":
+        detector = cv2.SIFT_create(nfeatures=1800, contrastThreshold=0.018, edgeThreshold=12)
+        norm = cv2.NORM_L2
+    elif detector_name == "ORB":
+        detector = cv2.ORB_create(
+            nfeatures=2400,
+            scaleFactor=1.2,
+            nlevels=8,
+            edgeThreshold=10,
+            fastThreshold=7,
+        )
+        norm = cv2.NORM_HAMMING
+    else:
+        raise ValueError("รองรับ feature detector เฉพาะ SIFT หรือ ORB")
+
+    source_kp, source_desc = detector.detectAndCompute(source_gray, source_mask)
+    target_kp, target_desc = detector.detectAndCompute(target_gray, target_mask)
+    source_count, target_count = len(source_kp), len(target_kp)
+    if source_desc is None or target_desc is None or source_count < 2 or target_count < 2:
+        reason = "ตรวจพบ keypoints ไม่เพียงพอสำหรับ descriptor matching"
+        return _FeatureMatchResult(None, source_count, target_count, 0, 0, 0.0, None, reason)
+
+    matcher = cv2.BFMatcher(normType=norm, crossCheck=False)
+    pairs = matcher.knnMatch(source_desc, target_desc, k=2)
+    good_matches = [pair[0] for pair in pairs if len(pair) == 2 and pair[0].distance < ratio_threshold * pair[1].distance]
+    if len(good_matches) < 8:
+        reason = f"คู่จุดที่ผ่าน Lowe's ratio test มีเพียง {len(good_matches)} คู่ (ต้องการอย่างน้อย 8)"
+        visualization = cv2.drawMatches(
+            source_roi,
+            source_kp,
+            provisional,
+            target_kp,
+            good_matches,
+            None,
+            flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
+        ) if good_matches else None
+        return _FeatureMatchResult(
+            None, source_count, target_count, len(good_matches), 0, 0.0, visualization, reason
+        )
+
+    source_points = np.float32([source_kp[match.queryIdx].pt for match in good_matches]).reshape(-1, 1, 2)
+    source_points[:, 0, 0] += x0
+    source_points[:, 0, 1] += y0
+    target_points = np.float32([target_kp[match.trainIdx].pt for match in good_matches]).reshape(-1, 1, 2)
+    homography, inlier_mask = cv2.findHomography(
+        source_points,
+        target_points,
+        cv2.RANSAC,
+        ransac_threshold,
+    )
+    inlier_flags = inlier_mask.ravel().astype(bool) if inlier_mask is not None else np.zeros(len(good_matches), bool)
+    inliers = int(inlier_flags.sum())
+    inlier_ratio = inliers / len(good_matches)
+    visualization = cv2.drawMatches(
+        source_roi,
+        source_kp,
+        provisional,
+        target_kp,
+        good_matches,
+        None,
+        matchColor=(44, 216, 151),
+        singlePointColor=(120, 120, 120),
+        matchesMask=inlier_flags.astype(np.uint8).tolist(),
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
+    )
+
+    minimum_inliers = max(6, int(round(len(good_matches) * 0.35)))
+    if homography is None or not np.isfinite(homography).all():
+        reason = "RANSAC ไม่สามารถคำนวณ Homography จากคู่จุดได้"
+        return _FeatureMatchResult(None, source_count, target_count, len(good_matches), inliers, inlier_ratio, visualization, reason)
+    if inliers < minimum_inliers:
+        reason = f"RANSAC inliers มีเพียง {inliers}/{len(good_matches)} จุด"
+        return _FeatureMatchResult(None, source_count, target_count, len(good_matches), inliers, inlier_ratio, visualization, reason)
+
+    projected = cv2.perspectiveTransform(quad.reshape(-1, 1, 2), homography).reshape(4, 2)
+    diagonal = float(np.linalg.norm(destination_quad[2] - destination_quad[0]))
+    mean_corner_error = float(np.linalg.norm(projected - destination_quad, axis=1).mean())
+    if not cv2.isContourConvex(np.round(projected).astype(np.int32)) or mean_corner_error > diagonal * 0.22:
+        reason = "Homography จาก feature matches บิดรูปเกินเกณฑ์ความปลอดภัย"
+        return _FeatureMatchResult(None, source_count, target_count, len(good_matches), inliers, inlier_ratio, visualization, reason)
+
+    return _FeatureMatchResult(
+        homography, source_count, target_count, len(good_matches), inliers, inlier_ratio, visualization, None
+    )
+
+
+def rectify_plate(
+    image: np.ndarray,
+    points: np.ndarray,
+    feature_detector: str = "SIFT",
+    ratio_threshold: float = 0.75,
+    ransac_threshold: float = 4.0,
+) -> RectificationResult:
+    """Rectify a plate using feature matching with robust disclosed fallbacks."""
+    if not 0.4 <= ratio_threshold <= 0.95:
+        raise ValueError("Lowe's ratio threshold ต้องอยู่ระหว่าง 0.40 ถึง 0.95")
+    if not 0.5 <= ransac_threshold <= 20.0:
+        raise ValueError("RANSAC threshold ต้องอยู่ระหว่าง 0.5 ถึง 20 pixels")
+
     quad = order_points(points)
     widths = [np.linalg.norm(quad[1] - quad[0]), np.linalg.norm(quad[2] - quad[3])]
     heights = [np.linalg.norm(quad[3] - quad[0]), np.linalg.norm(quad[2] - quad[1])]
@@ -396,23 +544,47 @@ def rectify_plate(image: np.ndarray, points: np.ndarray) -> RectificationResult:
     if target_width / target_height < 1.4:
         target_width = int(round(target_height * 2.5))
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    source, destination = _edge_correspondences(gray, quad, target_width, target_height)
-    homography, mask = cv2.findHomography(source, destination, cv2.RANSAC, 3.5)
-    inliers = int(mask.sum()) if mask is not None else 0
-    minimum_inliers = max(8, int(len(source) * 0.45))
+    destination_quad = np.array(
+        [[0, 0], [target_width - 1, 0], [target_width - 1, target_height - 1], [0, target_height - 1]],
+        dtype=np.float32,
+    )
+    corner_homography = cv2.getPerspectiveTransform(quad, destination_quad)
+    provisional = cv2.warpPerspective(
+        image,
+        corner_homography,
+        (target_width, target_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    feature_result = _feature_match_homography(
+        image,
+        quad,
+        provisional,
+        destination_quad,
+        feature_detector,
+        ratio_threshold,
+        ransac_threshold,
+    )
 
-    if homography is not None and np.isfinite(homography).all() and inliers >= minimum_inliers:
-        method = "RANSAC edge homography"
+    if feature_result.homography is not None:
+        homography = feature_result.homography
+        inliers = feature_result.inliers
+        correspondences = feature_result.good_matches
+        method = f"{feature_detector.upper()} + KNN ratio + RANSAC"
     else:
-        destination_quad = np.array(
-            [[0, 0], [target_width - 1, 0], [target_width - 1, target_height - 1], [0, target_height - 1]],
-            dtype=np.float32,
-        )
-        homography = cv2.getPerspectiveTransform(quad, destination_quad)
-        inliers = 4
-        source = quad
-        method = "4-corner fallback"
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        source, destination = _edge_correspondences(gray, quad, target_width, target_height)
+        homography, mask = cv2.findHomography(source, destination, cv2.RANSAC, 3.5)
+        inliers = int(mask.sum()) if mask is not None else 0
+        correspondences = len(source)
+        minimum_inliers = max(8, int(len(source) * 0.45))
+        if homography is not None and np.isfinite(homography).all() and inliers >= minimum_inliers:
+            method = "RANSAC edge fallback"
+        else:
+            homography = corner_homography
+            inliers = 4
+            correspondences = 4
+            method = "4-corner fallback"
 
     rectified = cv2.warpPerspective(
         image,
@@ -421,7 +593,22 @@ def rectify_plate(image: np.ndarray, points: np.ndarray) -> RectificationResult:
         flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_REPLICATE,
     )
-    return RectificationResult(rectified, homography, method, inliers, len(source))
+    return RectificationResult(
+        image=rectified,
+        homography=homography,
+        method=method,
+        inliers=inliers,
+        correspondences=correspondences,
+        feature_detector=feature_detector.upper(),
+        source_keypoints=feature_result.source_keypoints,
+        target_keypoints=feature_result.target_keypoints,
+        good_matches=feature_result.good_matches,
+        feature_inliers=feature_result.inliers,
+        feature_inlier_ratio=feature_result.inlier_ratio,
+        ratio_threshold=ratio_threshold,
+        match_visualization=feature_result.visualization,
+        feature_failure_reason=feature_result.failure_reason,
+    )
 
 
 def preprocess_for_ocr(rectified: np.ndarray) -> np.ndarray:

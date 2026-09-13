@@ -7,12 +7,15 @@
 1. อัปโหลดภาพรถ 1 ภาพ หรือถ่ายภาพจากกล้อง
 2. ตรวจหาบริเวณป้ายทะเบียนจากเส้นขอบและลักษณะสี่เหลี่ยม
 3. ตัดภาพป้ายก่อนปรับ เพื่อใช้เปรียบเทียบ
-4. เก็บจุดตามขอบป้ายหลายจุดและคำนวณ Homography ด้วย RANSAC
-5. ใช้ Perspective Transform เพื่อปรับป้ายให้มองตรง
-6. แปลง Grayscale เพิ่ม Contrast ด้วย CLAHE และลด Noise
-7. แสดงภาพก่อน–หลัง พร้อมดาวน์โหลด PNG
+4. สร้างภาพ frontal reference เบื้องต้นจากมุมป้าย 4 จุด
+5. ตรวจหา SIFT หรือ ORB keypoints และสร้าง descriptors ในป้ายต้นฉบับกับ reference
+6. จับคู่ด้วย KNN แล้วคัด outlier ขั้นแรกด้วย Lowe's ratio test
+7. คำนวณ Homography จากคู่จุดด้วย RANSAC และตรวจสอบ inlier ratio/ความบิดของผลลัพธ์
+8. ใช้ Perspective Transform เพื่อปรับป้ายให้มองตรง
+9. แปลง Grayscale เพิ่ม Contrast ด้วย CLAHE และลด Noise
+10. แสดงภาพก่อน–หลัง ภาพ match/inlier และดาวน์โหลด PNG
 
-หากจุดตามขอบไม่เพียงพอ ระบบจะ fallback ไปใช้มุมป้าย 4 จุด และแจ้งวิธีที่ใช้บนหน้าเว็บอย่างชัดเจน OCR ไม่ใช่ส่วนหลักของโปรเจกต์ แต่ภาพสุดท้ายถูกเตรียมให้พร้อมสำหรับต่อกับ OCR ภายนอก
+หาก feature matches ไม่เพียงพอ ระบบจะ fallback ไปใช้ RANSAC จากจุดตามขอบ และถ้ายังไม่เสถียรจึงใช้มุมป้าย 4 จุด ทุกกรณีจะแจ้งวิธีที่ใช้จริงบนหน้าเว็บอย่างชัดเจน OCR ไม่ใช่ส่วนหลักของโปรเจกต์ แต่ภาพสุดท้ายถูกเตรียมให้พร้อมสำหรับต่อกับ OCR ภายนอก
 
 ## รันบนเครื่อง
 
@@ -34,7 +37,7 @@ pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ```
 
-ชุดทดสอบสร้างภาพรถและป้ายเอียงสังเคราะห์ขึ้นในหน่วยความจำ จึงไม่ต้องใช้ไฟล์ภาพจริงในการทดสอบ pipeline
+ชุดทดสอบครอบคลุม SIFT, ORB, KNN ratio test, RANSAC, fallback และภาพรถ/ป้ายเอียงสังเคราะห์โดยไม่ต้องพึ่งไฟล์ภายนอก
 
 ## Deploy บน Streamlit Community Cloud
 
@@ -47,6 +50,6 @@ python -m unittest discover -s tests -v
 ## โครงสร้างหลัก
 
 - `app.py` — หน้าเว็บ Streamlit
-- `plate_rectification.py` — detection, RANSAC homography, perspective transform และ preprocessing
+- `plate_rectification.py` — detection, SIFT/ORB, descriptor matching, RANSAC homography, perspective transform และ preprocessing
 - `tests/test_plate_rectification.py` — unit/integration tests ของ pipeline
 - `.streamlit/config.toml` — theme และขนาดไฟล์อัปโหลด
